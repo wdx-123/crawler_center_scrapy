@@ -1,0 +1,24 @@
+﻿{
+  "data": {
+    "recentACSubmissions": [
+      {
+        "submitTime": "1700000000",
+        "question": {
+          "title": "Two Sum",
+          "translatedTitle": "Two Sum CN",
+          "titleSlug": "two-sum",
+          "questionFrontendId": "1"
+        }
+      },
+      {
+        "submitTime": "1700000100",
+        "question": {
+          "title": "Add Two Numbers",
+          "translatedTitle": null,
+          "titleSlug": "add-two-numbers",
+          "questionFrontendId": "2"
+        }
+      }
+    ]
+  }
+}

@@ -4,11 +4,21 @@ leetcode:
 luogu:
   base_url: "https://www.luogu.com.cn"
 
+lanqiao:
+  base_url: "https://www.lanqiao.cn"
+
 crawler:
   default_timeout: 15
   default_sleep_sec: 0.8
   default_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  run_timeout_sec: 30
+  concurrent_requests: 16
+  retry_times: 2
+  proxy_active_probe_interval_sec: 300
 
 api:
   title: "crawler_center"
-  version: "0.1.0"
+  version: "2.0.0"
+
+internal:
+  token: ""

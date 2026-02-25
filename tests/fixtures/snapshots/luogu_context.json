@@ -1,0 +1,23 @@
+﻿{
+  "data": {
+    "user": {
+      "uid": 1,
+      "name": "demo",
+      "avatar": "https://img.example/avatar.png"
+    },
+    "passed": [
+      {
+        "pid": "P1000",
+        "title": "A+B Problem",
+        "difficulty": 1,
+        "type": "P"
+      },
+      {
+        "pid": "P1001",
+        "title": "Another Problem",
+        "difficulty": 2,
+        "type": "P"
+      }
+    ]
+  }
+}
