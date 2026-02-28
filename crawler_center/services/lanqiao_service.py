@@ -1,36 +1,40 @@
-"""Lanqiao 业务服务骨架。"""
+"""Lanqiao 业务服务实现。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List
 
 from crawler_center.core.config import AppSettings
+from crawler_center.core.errors import UpstreamRequestError
+from crawler_center.crawler.parsers.lanqiao_parser import build_solve_stats_payload
 from crawler_center.crawler.runner import ScrapyRunnerService
-
-
-@dataclass
-class LanqiaoCookie:
-    """登录结果中的 cookie 信息载体。"""
-
-    cookie_header: str
-    cookies: Optional[Dict[str, str]] = None
+from crawler_center.crawler.spiders.lanqiao_solve_stats import LanqiaoSolveStatsSpider
 
 
 class LanqiaoService:
-    """Lanqiao 业务服务。
-
-    当前方法尚未实现，用于保留协议与后续扩展点。
-    """
+    """Lanqiao 抓取能力聚合服务。"""
 
     def __init__(self, runner: ScrapyRunnerService, settings: AppSettings) -> None:
         self._runner = runner
         self._settings = settings
 
-    async def login(self, username: str, password: str) -> LanqiaoCookie:
-        """执行登录流程并返回 cookie 信息。"""
-        raise NotImplementedError("Lanqiao login not implemented yet")
-
-    async def solve_stats(self, cookie_header: Optional[str], user_id: Optional[str]) -> Dict[str, Any]:
+    async def solve_stats(self, phone: str, password: str, sync_num: int) -> Dict[str, Any]:
         """抓取用户做题统计信息。"""
-        raise NotImplementedError("Lanqiao solve_stats not implemented yet")
+        items = await self._runner.run(
+            LanqiaoSolveStatsSpider,
+            base_url=self._settings.lanqiao_base_url,
+            phone=phone,
+            password=password,
+            sync_num=sync_num,
+        )
+        self._raise_if_item_error(items, "lanqiao solve_stats")
+        return build_solve_stats_payload(submissions=items, sync_num=sync_num)
+
+    def _raise_if_item_error(self, items: List[Dict[str, Any]], context: str) -> None:
+        for row in items:
+            error = row.get("_error")
+            if error:
+                stage = row.get("_stage")
+                if stage:
+                    raise UpstreamRequestError(f"{context}: [{stage}] {error}")
+                raise UpstreamRequestError(f"{context}: {error}")

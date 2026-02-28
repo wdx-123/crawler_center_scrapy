@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+import asyncio
 
 import pytest
 import scrapy
@@ -65,3 +67,30 @@ async def test_runner_timeout(monkeypatch):
 
     with pytest.raises(CrawlerTimeoutError):
         await runner.run(DummySpider, run_timeout_sec=0.01)
+
+
+@pytest.mark.asyncio
+async def test_runner_rebinds_reactor_loop(tmp_path):
+    html_file = tmp_path / "sample.html"
+    html_file.write_text("<html><head><title>ok</title></head><body></body></html>", encoding="utf-8")
+
+    settings = build_test_settings()
+    proxy_service = ProxyService(probe_urls=settings.probe_urls, user_agent=settings.default_user_agent)
+
+    ScrapyRunnerService.reset_instance_for_tests()
+    runner = ScrapyRunnerService.get_instance(app_settings=settings, proxy_service=proxy_service)
+
+    from twisted.internet import reactor
+
+    if not hasattr(reactor, "_asyncioEventloop"):
+        pytest.skip("reactor has no asyncio loop binding")
+
+    stale_loop = asyncio.new_event_loop()
+    try:
+        reactor._asyncioEventloop = stale_loop  # type: ignore[attr-defined]
+        items = await runner.run(LocalFileSpider, file_url=html_file.resolve().as_uri(), run_timeout_sec=3)
+    finally:
+        stale_loop.close()
+
+    assert items == [{"title": "ok"}]
+    assert reactor._asyncioEventloop is asyncio.get_running_loop()  # type: ignore[attr-defined]

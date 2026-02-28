@@ -18,6 +18,7 @@ except Exception:
 from scrapy import Spider, signals  # Spider：爬虫基类；signals：Scrapy 信号（事件）系统
 from scrapy.crawler import CrawlerRunner  # CrawlerRunner：在代码中启动/管理爬虫（不自动退出进程）
 from scrapy.utils.defer import deferred_to_future  # 把 Twisted Deferred 转成 asyncio Future，才能 await
+from twisted.internet import reactor
 
 from crawler_center.core.config import AppSettings  # 你们项目的配置类
 from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutError  # 自定义异常：执行失败/超时
@@ -71,6 +72,20 @@ class ScrapyRunnerService:
         run_timeout_sec: Optional[int] = None,  # 可选：本次运行的超时时间
         **spider_kwargs: Any,  # 传给 spider 的参数，比如 start_urls、keyword 等
     ) -> List[Dict[str, Any]]:
+        # CrawlerRunner 依赖已运行的 reactor；若未启动会出现请求悬挂直至超时。
+        if not reactor.running:
+            reactor.startRunning(installSignalHandlers=False)
+
+        try:
+            running_loop = asyncio.get_running_loop()
+            reactor_loop = getattr(reactor, "_asyncioEventloop", None)
+            # Uvicorn/TestClient 会创建新的 asyncio loop，导致 reactor 绑定旧 loop 而请求悬挂。
+            # 这里在运行前把 reactor 绑定到当前 loop。
+            if reactor_loop is not None and reactor_loop is not running_loop:
+                reactor._asyncioEventloop = running_loop  # type: ignore[attr-defined]
+        except RuntimeError:
+            pass
+
         # 用来收集爬虫产出的 items（最终返回这个 list）
         collected_items: List[Dict[str, Any]] = []
 

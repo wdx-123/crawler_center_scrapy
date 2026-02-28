@@ -2,38 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-
 from pydantic import BaseModel, Field
-
-
-class LanqiaoLoginRequest(BaseModel):
-    """登录请求参数。"""
-
-    username: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
-
-
-class LanqiaoLoginResponse(BaseModel):
-    """登录响应数据。"""
-
-    ok: bool = True
-    cookie_header: str = Field(..., description="cookie header string")
-    cookies: Optional[Dict[str, str]] = Field(default=None)
-    message: Optional[str] = None
 
 
 class LanqiaoSolveStatsRequest(BaseModel):
     """做题统计查询请求。"""
 
-    cookie_header: Optional[str] = Field(default=None)
-    user_id: Optional[str] = Field(default=None)
+    phone: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+    sync_num: int = Field(ge=-1)
 
 
-class LanqiaoSolveStatsResponse(BaseModel):
-    """做题统计查询响应。"""
+class LanqiaoStats(BaseModel):
+    """蓝桥提交统计信息。"""
 
-    ok: bool = True
-    solved_count: Optional[int] = None
-    extra: Dict[str, Any] = Field(default_factory=dict)
-    message: Optional[str] = None
+    total_passed: int = 0
+    total_failed: int = 0
+
+
+class LanqiaoProblem(BaseModel):
+    """蓝桥通过题目条目。"""
+
+    problem_name: str = ""
+    problem_id: int
+    created_at: str = ""
+    is_passed: bool = True

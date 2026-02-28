@@ -30,6 +30,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 # 手动返回 JSON 响应体（用于统一错误格式）
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError as PydanticValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # API 契约层：统一错误响应模型
 from crawler_center.api.schemas.common import ErrorResponse
@@ -165,9 +167,20 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
         detail = str(exc.detail)
         return _error_response(status_code=exc.status_code, error=detail, code="http_error")
 
+    @app.exception_handler(StarletteHTTPException)
+    async def starlette_http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        """处理路由未命中等 Starlette HTTP 异常。"""
+        detail = str(exc.detail)
+        return _error_response(status_code=exc.status_code, error=detail, code="http_error")
+
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
         """处理请求参数校验失败（FastAPI/Pydantic 触发）。"""
+        return _error_response(status_code=422, error=str(exc), code="validation_error")
+
+    @app.exception_handler(PydanticValidationError)
+    async def pydantic_validation_exception_handler(_: Request, exc: PydanticValidationError) -> JSONResponse:
+        """处理依赖层抛出的 Pydantic 校验异常。"""
         return _error_response(status_code=422, error=str(exc), code="validation_error")
 
     @app.exception_handler(CrawlerTimeoutError)

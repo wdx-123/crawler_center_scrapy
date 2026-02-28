@@ -4,7 +4,7 @@
 
 - LeetCode（已实现）
 - 洛谷 Luogu（已实现）
-- 蓝桥 Lanqiao（接口已预留，当前为占位实现）
+- 蓝桥 Lanqiao（已实现单接口抓取）
 
 ## 目录
 
@@ -97,8 +97,7 @@ uvicorn crawler_center.api.main:app --host 0.0.0.0 --port 8001 --reload
 | POST | `/v2/leetcode/public_profile` | LeetCode 公开资料 |
 | POST | `/v2/leetcode/crawl` | LeetCode 聚合抓取（meta + recent + stats） |
 | POST | `/v2/luogu/practice` | 洛谷练题/通过题数据 |
-| POST | `/v2/lanqiao/login` | 蓝桥登录（当前返回 501） |
-| POST | `/v2/lanqiao/solve_stats` | 蓝桥做题统计（当前返回 501） |
+| POST | `/v2/lanqiao/solve_stats` | 蓝桥做题统计（登录+拉取一体化） |
 
 ### 内部接口（代理池）
 
@@ -107,6 +106,7 @@ uvicorn crawler_center.api.main:app --host 0.0.0.0 --port 8001 --reload
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| GET | `/internal/proxies` | 查询代理列表（支持状态筛选，默认按 OK/SUSPECT/DEAD 排序） |
 | POST | `/internal/proxies/sync` | 全量替换代理池 |
 | POST | `/internal/proxies/remove` | 删除指定代理 |
 
@@ -172,13 +172,34 @@ curl -X POST http://127.0.0.1:8001/v2/luogu/practice \
   -d "{\"uid\":1,\"sleep_sec\":0.8}"
 ```
 
-### 4) 代理池同步（内部接口）
+### 4) 蓝桥做题统计（单接口）
+
+```bash
+curl -X POST http://127.0.0.1:8001/v2/lanqiao/solve_stats \
+  -H "Content-Type: application/json" \
+  -d "{\"phone\":\"13800000000\",\"password\":\"your-password\",\"sync_num\":0}"
+```
+
+`sync_num` 规则：
+
+- `-1`：只返回 `stats`
+- `0`：返回 `stats + problems`
+- `>0`：仅在前 N 条原始提交范围内筛选去重后返回 `problems`
+
+### 5) 代理池同步（内部接口）
 
 ```bash
 curl -X POST http://127.0.0.1:8001/internal/proxies/sync \
   -H "Content-Type: application/json" \
   -H "X-Internal-Token: secret-token" \
   -d "{\"proxies\":[\"http://127.0.0.1:9000\",\"http://127.0.0.1:9001\"]}"
+```
+
+### 6) 代理池查询（内部接口）
+
+```bash
+curl -X GET "http://127.0.0.1:8001/internal/proxies?global_status=OK&target_site=leetcode" \
+  -H "X-Internal-Token: secret-token"
 ```
 
 ## 配置说明
@@ -233,6 +254,7 @@ internal:
 代理池能力由 `ProxyService` 提供：
 
 - 代理全量同步与删除
+- 代理列表查询（支持全局状态筛选 + 站点状态筛选）
 - 按站点维护健康状态：`leetcode` / `luogu` / `lanqiao`
 - 状态机：`OK -> SUSPECT -> DEAD`
 - 后台主动探测（定时轮询 probe URL）
@@ -240,6 +262,8 @@ internal:
 
 说明：
 
+- 新增代理请通过 `POST /internal/proxies/sync` 提交全量列表。
+- 删除代理请通过 `POST /internal/proxies/remove` 传入待删 `proxy_url`（精确到 `ip:port`）。
 - 若代理池为空，抓取流程会自动退化为直连请求。
 - 内部接口建议仅在内网或网关后暴露。
 
@@ -305,7 +329,6 @@ docker compose up -d
 
 ## 已知限制
 
-- 蓝桥相关接口目前为占位实现，调用会返回 `501 Not Implemented`。
 - 代理池为进程内内存实现，服务重启后不会持久化。
 - 对目标站点的抓取能力依赖页面结构/接口稳定性，若上游变更需要同步调整 parser/spider。
 

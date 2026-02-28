@@ -42,6 +42,11 @@ class LeetCodeProfileMetaSpider(LeetCodeSpiderBase):
             meta={"target_site": self.target_site},
         )
 
+    async def start(self):
+        """兼容 Scrapy 2.13+ 的异步入口，复用既有请求构造逻辑。"""
+        for request in self.start_requests():
+            yield request
+
     def parse_profile(self, response: scrapy.http.Response):
         """解析主页 HTML 并产出标准化元信息。"""
         yield parse_profile_meta_html(

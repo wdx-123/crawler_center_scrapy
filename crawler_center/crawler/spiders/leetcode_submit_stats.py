@@ -42,6 +42,11 @@ class LeetCodeSubmitStatsSpider(LeetCodeSpiderBase):
         """初始化抓取参数。"""
         super().__init__(base_url=base_url, username=username, sleep_sec=sleep_sec, **kwargs)
 
+    async def start(self):
+        """兼容 Scrapy 2.13+ 的异步入口，复用既有请求构造逻辑。"""
+        for request in self.start_requests():
+            yield request
+
     def start_requests(self):
         """先获取站点上下文，再进入 GraphQL 查询。"""
         yield scrapy.Request(

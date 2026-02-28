@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import urlsplit
 
 import requests
 
@@ -170,6 +171,81 @@ class ProxyService:
                 )
             return out
 
+    def list_proxies(
+        self,
+        global_status: str | ProxyStatus | None = None,
+        target_site: str | TargetSite | None = None,
+        target_status: str | ProxyStatus | None = None,
+    ) -> Dict[str, object]:
+        """按筛选条件返回代理列表视图与汇总信息。"""
+        global_status_filter = _parse_proxy_status(global_status) if global_status is not None else None
+        target_site_filter = _parse_target_site(target_site) if target_site is not None else None
+        target_status_filter = _parse_proxy_status(target_status) if target_status is not None else None
+        if target_status_filter and not target_site_filter:
+            raise ValueError("target_site is required when target_status is provided")
+
+        with self._lock:
+            selected_records: List[ProxyRecord] = []
+            for record in self._records.values():
+                if global_status_filter and record.status != global_status_filter:
+                    continue
+
+                if target_site_filter and target_status_filter:
+                    if record.health_by_target[target_site_filter].status != target_status_filter:
+                        continue
+
+                selected_records.append(record)
+
+            selected_records.sort(key=lambda record: _list_sort_key(record, target_site_filter))
+
+            items = [self._to_list_item(record) for record in selected_records]
+            by_global_status = {
+                ProxyStatus.OK.value: 0,
+                ProxyStatus.SUSPECT.value: 0,
+                ProxyStatus.DEAD.value: 0,
+            }
+            for record in selected_records:
+                by_global_status[record.status.value] += 1
+
+            return {
+                "items": items,
+                "summary": {
+                    "total": len(items),
+                    "by_global_status": by_global_status,
+                    "applied_filters": {
+                        "global_status": global_status_filter.value if global_status_filter else None,
+                        "target_site": target_site_filter.value if target_site_filter else None,
+                        "target_status": target_status_filter.value if target_status_filter else None,
+                    },
+                },
+            }
+
+    def _to_list_item(self, record: ProxyRecord) -> Dict[str, object]:
+        """序列化单条代理记录为接口返回结构。"""
+        return {
+            "proxy_url": record.proxy_url,
+            "ip_port": _extract_ip_port(record.proxy_url),
+            "status": record.status.value,
+            "status_label": _status_label(record.status),
+            "success_count": record.success_count,
+            "fail_count": record.fail_count,
+            "consecutive_fail": record.consecutive_fail,
+            "avg_latency_ms": round(record.avg_latency_ms, 2),
+            "last_checked_at": record.last_checked_at,
+            "last_used_at": record.last_used_at,
+            "health_by_target": {
+                target.value: {
+                    "status": record.health_by_target[target].status.value,
+                    "status_label": _status_label(record.health_by_target[target].status),
+                    "success_count": record.health_by_target[target].success_count,
+                    "fail_count": record.health_by_target[target].fail_count,
+                    "consecutive_fail": record.health_by_target[target].consecutive_fail,
+                    "avg_latency_ms": round(record.health_by_target[target].avg_latency_ms, 2),
+                }
+                for target in TargetSite
+            },
+        }
+
     def acquire_proxy(self, target: str) -> Optional[str]:
         """按健康度策略为目标站点选择一个代理。
 
@@ -319,7 +395,6 @@ def _derive_status(consecutive_fail: int) -> ProxyStatus:
     return ProxyStatus.OK
 
 
-
 def _status_priority(status: ProxyStatus) -> int:
     """状态优先级：OK < SUSPECT < DEAD。"""
     if status == ProxyStatus.OK:
@@ -329,6 +404,72 @@ def _status_priority(status: ProxyStatus) -> int:
     return 2
 
 
+def _status_label(status: ProxyStatus) -> str:
+    """状态中文文案映射。"""
+    if status == ProxyStatus.OK:
+        return "好"
+    if status == ProxyStatus.SUSPECT:
+        return "中"
+    return "坏"
+
+
+def _latency_sort_value(latency_ms: float) -> float:
+    """排序时将未知延迟（0）放在已知延迟之后。"""
+    return latency_ms if latency_ms > 0 else 999_999
+
+
+def _list_sort_key(record: ProxyRecord, target_site: TargetSite | None) -> tuple[int, int, float, str]:
+    """列表接口排序键，支持按全局或单站点状态排序。"""
+    if target_site:
+        target_health = record.health_by_target[target_site]
+        return (
+            _status_priority(target_health.status),
+            target_health.consecutive_fail,
+            _latency_sort_value(target_health.avg_latency_ms),
+            record.proxy_url,
+        )
+
+    return (
+        _status_priority(record.status),
+        record.consecutive_fail,
+        _latency_sort_value(record.avg_latency_ms),
+        record.proxy_url,
+    )
+
+
+def _parse_proxy_status(raw_status: str | ProxyStatus) -> ProxyStatus:
+    """将输入严格转换为代理状态枚举。"""
+    if isinstance(raw_status, ProxyStatus):
+        return raw_status
+
+    value = str(raw_status).strip().upper()
+    try:
+        return ProxyStatus(value)
+    except ValueError as exc:
+        raise ValueError(f"unsupported proxy status: {raw_status}") from exc
+
+
+def _parse_target_site(raw_target: str | TargetSite) -> TargetSite:
+    """将输入严格转换为目标站点枚举。"""
+    if isinstance(raw_target, TargetSite):
+        return raw_target
+
+    value = str(raw_target).strip().lower()
+    try:
+        return TargetSite(value)
+    except ValueError as exc:
+        raise ValueError(f"unsupported target site: {raw_target}") from exc
+
+
+def _extract_ip_port(proxy_url: str) -> str:
+    """从代理 URL 中提取 `ip:port` 显示字段。"""
+    value = str(proxy_url).strip()
+    if "://" not in value:
+        return value
+
+    parsed = urlsplit(value)
+    return parsed.netloc or value
+
 
 def _update_avg(current_avg: float, count_after_increment: int, new_value: float) -> float:
     """增量更新平均值，避免保存完整历史样本。"""
@@ -336,7 +477,6 @@ def _update_avg(current_avg: float, count_after_increment: int, new_value: float
         return float(new_value)
     previous_count = count_after_increment - 1
     return ((current_avg * previous_count) + float(new_value)) / count_after_increment
-
 
 
 def normalize_target(raw_target: str | TargetSite | None) -> TargetSite:
@@ -350,7 +490,6 @@ def normalize_target(raw_target: str | TargetSite | None) -> TargetSite:
     if normalized == TargetSite.LANQIAO.value:
         return TargetSite.LANQIAO
     return TargetSite.LEETCODE
-
 
 
 def normalize_target_name(raw_target: str | None) -> str:

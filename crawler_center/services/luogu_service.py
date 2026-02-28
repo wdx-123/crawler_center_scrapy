@@ -35,4 +35,3 @@ class LuoguService:
             return {"user": None, "passed": [], "passed_count": 0}
 
         return dict(items[0])
-s

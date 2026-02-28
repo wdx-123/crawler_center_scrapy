@@ -69,51 +69,52 @@ class LeetCodeSpiderBase(scrapy.Spider):
             if "csrftoken" in jar:
                 return str(jar["csrftoken"].value)
         return ""
-def build_graphql_request(
-    self,
-    *,  # 下面这些参数必须用关键字传入（可读性更强，避免位置参数传错）
-    url: str,  # GraphQL endpoint 地址（例如 https://leetcode.com/graphql 或 /graphql/noj-go/）
-    operation_name: str,  # GraphQL 的 operationName（便于服务端识别/路由/日志；有些接口要求必须带）
-    query: str,  # GraphQL 查询文本（query/mutation 字符串）
-    variables: Dict[str, Any],  # GraphQL variables（会被序列化成 JSON）
-    referer: str,  # Referer 头（常用于反爬/风控校验，模拟从页面发起请求）
-    csrf_token: str,  # CSRF token（从 Set-Cookie 解析得到的 csrftoken；非空则附带到请求头）
-    callback: Any,  # Scrapy 回调函数（响应返回后执行；通常是 self.parse_xxx）
-) -> scrapy.Request:
-    """构造标准化 GraphQL POST 请求。
 
-    统一行为：
-    - 设置 Referer / Origin / JSON Content-Type。
-    - 仅当 token 非空时附带 ``x-csrftoken``。
-    - 始终写入 ``meta["target_site"]``，用于代理健康回传。
-    """
+    def build_graphql_request(
+        self,
+        *,  # 下面这些参数必须用关键字传入（可读性更强，避免位置参数传错）
+        url: str,  # GraphQL endpoint 地址（例如 https://leetcode.com/graphql 或 /graphql/noj-go/）
+        operation_name: str,  # GraphQL 的 operationName（便于服务端识别/路由/日志；有些接口要求必须带）
+        query: str,  # GraphQL 查询文本（query/mutation 字符串）
+        variables: Dict[str, Any],  # GraphQL variables（会被序列化成 JSON）
+        referer: str,  # Referer 头（常用于反爬/风控校验，模拟从页面发起请求）
+        csrf_token: str,  # CSRF token（从 Set-Cookie 解析得到的 csrftoken；非空则附带到请求头）
+        callback: Any,  # Scrapy 回调函数（响应返回后执行；通常是 self.parse_xxx）
+    ) -> scrapy.Request:
+        """构造标准化 GraphQL POST 请求。
 
-    # 构造请求头：尽量贴近浏览器/前端发 GraphQL 的常见头部，降低被风控概率
-    headers: Dict[str, str] = {
-        "Referer": referer,  # 告诉服务端请求来源页面（部分站点会校验）
-        "Content-Type": "application/json",  # POST body 是 JSON（GraphQL 常用方式）
-        "Origin": self.base_url,  # 浏览器跨域相关头；一些站点会校验 Origin 是否匹配域名
-        "Accept": "application/json",  # 声明客户端期望 JSON 响应（GraphQL 返回 JSON）
-    }
+        统一行为：
+        - 设置 Referer / Origin / JSON Content-Type。
+        - 仅当 token 非空时附带 ``x-csrftoken``。
+        - 始终写入 ``meta["target_site"]``，用于代理健康回传。
+        """
 
-    # 仅当拿到了 csrf_token 才加 x-csrftoken 头（尽力而为；避免空值污染请求头）
-    if csrf_token:
-        headers["x-csrftoken"] = csrf_token  # LeetCode 常见 CSRF 校验方式：header + cookie 配对
+        # 构造请求头：尽量贴近浏览器/前端发 GraphQL 的常见头部，降低被风控概率
+        headers: Dict[str, str] = {
+            "Referer": referer,  # 告诉服务端请求来源页面（部分站点会校验）
+            "Content-Type": "application/json",  # POST body 是 JSON（GraphQL 常用方式）
+            "Origin": self.base_url,  # 浏览器跨域相关头；一些站点会校验 Origin 是否匹配域名
+            "Accept": "application/json",  # 声明客户端期望 JSON 响应（GraphQL 返回 JSON）
+        }
 
-    # 构造 GraphQL 请求体（标准三件套：operationName / query / variables）
-    payload = {
-        "operationName": operation_name,  # 操作名（服务端/日志/路由常用）
-        "query": query.strip(),  # 去掉首尾空白，减少无意义差异（更干净、也方便日志比对）
-        "variables": variables,  # 变量对象（会被 JSON 序列化传给服务端）
-    }
+        # 仅当拿到了 csrf_token 才加 x-csrftoken 头（尽力而为；避免空值污染请求头）
+        if csrf_token:
+            headers["x-csrftoken"] = csrf_token  # LeetCode 常见 CSRF 校验方式：header + cookie 配对
 
-    # 返回一个 Scrapy Request：交给 Scrapy 下载器发请求，响应回来后交给 callback 处理
-    return scrapy.Request(
-        url=url,  # 请求地址：GraphQL endpoint
-        method="POST",  # GraphQL 请求通常用 POST
-        body=json.dumps(payload),  # dict -> JSON 字符串作为请求体（Scrapy 会按 bytes/str 发送）
-        headers=headers,  # 上面构造的请求头（含可选 CSRF 头）
-        callback=callback,  # 响应回调：解析 JSON 并产出 items/后续请求
-        dont_filter=True,  # 禁用去重：GraphQL 常用同一 URL 多次 POST（body 不同），避免被 Scrapy 过滤
-        meta={"target_site": self.target_site},  # 写入站点标识：供代理中间件按站点分配/统计/健康回传
-    )
+        # 构造 GraphQL 请求体（标准三件套：operationName / query / variables）
+        payload = {
+            "operationName": operation_name,  # 操作名（服务端/日志/路由常用）
+            "query": query.strip(),  # 去掉首尾空白，减少无意义差异（更干净、也方便日志比对）
+            "variables": variables,  # 变量对象（会被 JSON 序列化传给服务端）
+        }
+
+        # 返回一个 Scrapy Request：交给 Scrapy 下载器发请求，响应回来后交给 callback 处理
+        return scrapy.Request(
+            url=url,  # 请求地址：GraphQL endpoint
+            method="POST",  # GraphQL 请求通常用 POST
+            body=json.dumps(payload),  # dict -> JSON 字符串作为请求体（Scrapy 会按 bytes/str 发送）
+            headers=headers,  # 上面构造的请求头（含可选 CSRF 头）
+            callback=callback,  # 响应回调：解析 JSON 并产出 items/后续请求
+            dont_filter=True,  # 禁用去重：GraphQL 常用同一 URL 多次 POST（body 不同），避免被 Scrapy 过滤
+            meta={"target_site": self.target_site},  # 写入站点标识：供代理中间件按站点分配/统计/健康回传
+        )

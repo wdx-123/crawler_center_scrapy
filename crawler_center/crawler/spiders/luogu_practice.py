@@ -49,6 +49,11 @@ class LuoguPracticeSpider(scrapy.Spider):
             meta={"target_site": self.target_site},
         )
 
+    async def start(self):
+        """兼容 Scrapy 2.13+ 的异步入口，复用既有请求构造逻辑。"""
+        for request in self.start_requests():
+            yield request
+
     def parse_practice(self, response: scrapy.http.Response):
         """解析 Luogu 响应为统一结构。
 

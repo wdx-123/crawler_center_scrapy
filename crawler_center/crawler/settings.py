@@ -70,7 +70,7 @@ def build_scrapy_settings(app_settings: AppSettings) -> Settings:
     # -------------------------
     # Item Pipeline：Spider yield 出 item 后的处理链
     # 常用于：清洗/去重/结构化/校验/落库/写队列/写文件等
-    settings.set(w
+    settings.set(
         "ITEM_PIPELINES",
         {
             # 内存管道（示例用途：将 item 暂存到内存供上层服务收集；或做轻量清洗）

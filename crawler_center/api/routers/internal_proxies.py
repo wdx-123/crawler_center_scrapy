@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 
 from crawler_center.api.dependencies import get_proxy_service
 from crawler_center.api.schemas.common import OkResponse
-from crawler_center.api.schemas.proxy import ProxyRemoveRequest, ProxySyncRequest
+from crawler_center.api.schemas.proxy import ProxyListQuery, ProxyRemoveRequest, ProxySyncRequest
 from crawler_center.core.logging import log_event
 from crawler_center.core.security import require_internal_token
 from crawler_center.services.proxy_service import ProxyService
@@ -19,6 +19,34 @@ from crawler_center.services.proxy_service import ProxyService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal/proxies", tags=["internal-proxy"])
+
+
+@router.get("", response_model=OkResponse, dependencies=[Depends(require_internal_token)])
+async def list_proxies(
+    request: Request,
+    query: ProxyListQuery = Depends(),
+    proxy_service: ProxyService = Depends(get_proxy_service),
+) -> OkResponse:
+    """查询代理池详情，支持全局/站点状态筛选。"""
+    result = proxy_service.list_proxies(
+        global_status=query.global_status,
+        target_site=query.target_site,
+        target_status=query.target_status,
+    )
+    log_event(
+        logger,
+        logging.INFO,
+        "proxy_list",
+        target="proxy_pool",
+        endpoint="/internal/proxies",
+        action="list",
+        operator=request.headers.get("X-Request-ID", "unknown"),
+        total=result["summary"]["total"],
+        global_status=query.global_status,
+        target_site=query.target_site,
+        target_status=query.target_status,
+    )
+    return OkResponse(data=result)
 
 
 @router.post("/sync", response_model=OkResponse, dependencies=[Depends(require_internal_token)])
