@@ -135,6 +135,9 @@ jobs:
       HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL || 'http://127.0.0.1:8000/v2/healthz' }}
       # 生产部署固定用 sha 标签，避免 latest 漂移
       IMAGE_TAG: sha-${{ needs.build_push.outputs.short_sha }}
+      # 显式注入 GHCR 凭证（避免服务器手动登录依赖）
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -174,7 +177,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ env.DEPLOY_PORT }}
           # fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
-          envs: DEPLOY_PATH,IMAGE_TAG,HEALTHCHECK_URL
+          envs: DEPLOY_PATH,IMAGE_TAG,HEALTHCHECK_URL,GHCR_USERNAME,GHCR_TOKEN
           script: |
             set -eu
 
@@ -197,6 +200,9 @@ jobs:
             else
               echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
             fi
+
+            # 自动登录 GHCR（确保有权拉取私有镜像）
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             # 拉取并更新服务
             docker compose pull crawler_center
