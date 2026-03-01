@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
@@ -13,6 +13,8 @@ def build_test_settings(internal_token: Optional[str] = None) -> AppSettings:
         leetcode_base_url="https://leetcode.cn",
         luogu_base_url="https://www.luogu.com.cn",
         lanqiao_base_url="https://www.lanqiao.cn",
+        lanqiao_login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        lanqiao_user_url="https://passport.lanqiao.cn/api/v1/user/",
         default_timeout_sec=10,
         default_sleep_sec=0.0,
         default_user_agent="pytest-agent",

@@ -1,0 +1,209 @@
+# ============================================================
+# CD - Build & Deploy
+# 目标：main 分支更新后自动完成：
+# 1) 质量门禁（pytest）
+# 2) 构建并推送多架构镜像到 GHCR
+# 3) SSH 到生产机用 docker compose 拉取镜像、更新 IMAGE_TAG、重启并做健康检查
+# ============================================================
+
+name: CD - Build & Deploy
+
+on:
+  push:
+    branches:
+      - "main"           # 仅 main push/merge 触发（持续部署）
+  workflow_dispatch:      # 允许手动触发（应急/重跑）
+
+permissions:
+  contents: read          # checkout 读仓库
+  packages: write         # push 镜像到 ghcr.io
+
+env:
+  IMAGE_NAME: ghcr.io/wdx-123/crawler_center_scrapy  # 镜像仓库名统一在这里
+
+jobs:
+  # ----------------------------
+  # Job: quality（CI 门禁）
+  # - 在 runner 上安装依赖并运行测试
+  # - 失败则后续构建/部署都不会执行
+  # ----------------------------
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # 与项目/镜像 Python 版本保持一致
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run quick tests
+        run: |
+          # 发布前快速回归集（最小质量闸门）
+          pytest -q tests/api tests/crawler tests/services
+
+  # ----------------------------
+  # Job: build_push（构建发布）
+  # - needs: quality：必须先通过测试
+  # - 产出 short_sha，供部署阶段使用 sha-xxxxxxx 可追溯标签
+  # - QEMU + Buildx：构建 linux/amd64 + linux/arm64 多架构镜像
+  # - 推送到 GHCR，并使用 GHA cache 加速
+  # ----------------------------
+  build_push:
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}  # 给 deploy_prod 生成 IMAGE_TAG
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare build variables
+        id: vars
+        run: |
+          # 取当前提交 sha 前 7 位（用于镜像标签/部署追溯）
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+        # 允许在 amd64 runner 上构建 arm64 镜像
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # BuildKit 构建器：多平台 + 缓存能力
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}  # 依赖 packages:write 权限
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # 流水线序号标签（辅助定位）
+            type=raw,value=v0.0.${{ github.run_number }}
+            # 可追溯部署标签（生产建议用这个而不是 latest）
+            type=raw,value=sha-${{ steps.vars.outputs.short_sha }}
+            # 漂移标签（方便手动使用，不建议用于生产部署）
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64  # 多架构 manifest list
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha                # 复用历史缓存
+          cache-to: type=gha,mode=max         # 写回最大化缓存层
+
+  # ----------------------------
+  # Job: deploy_prod（生产部署）
+  # - needs: build_push：镜像推送成功后再部署
+  # - concurrency：防并发部署冲突（同一时间只允许一个 prod 部署）
+  # - SSH 到服务器：
+  #   1) 准备部署目录
+  #   2) 下发 docker-compose.yml 和 .env.example
+  #   3) 初始化/更新 .env 中的 IMAGE_TAG=sha-xxxxxxx
+  #   4) docker compose pull/up
+  #   5) curl 健康检查失败则打印日志并退出（不自动回滚）
+  # ----------------------------
+  deploy_prod:
+    needs: build_push
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    env:
+      # GitHub Actions Variables（非敏感），提供默认值兜底
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/crawler_center_scrapy' }}
+      HEALTHCHECK_URL: ${{ vars.HEALTHCHECK_URL || 'http://127.0.0.1:8000/v2/healthz' }}
+      # 生产部署固定用 sha 标签，避免 latest 漂移
+      IMAGE_TAG: sha-${{ needs.build_push.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # 获取仓库内 docker-compose.yml/.env.example 以便 scp
+
+      - name: Prepare remote path
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.DEPLOY_PORT }}
+          # fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }} # 主机指纹校验（更安全）
+          envs: DEPLOY_PATH
+          script: |
+            set -eu
+            # 确保部署目录存在
+            mkdir -p "${DEPLOY_PATH}"
+
+      - name: Upload compose files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.DEPLOY_PORT }}
+          # fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          # 只下发 compose 和 env 模板；真实生产配置（config.yaml/.env敏感项）留在服务器本地维护
+          source: "docker-compose.yml,.env.example"
+          target: ${{ env.DEPLOY_PATH }}
+
+      - name: Deploy and health check
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.DEPLOY_PORT }}
+          # fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          envs: DEPLOY_PATH,IMAGE_TAG,HEALTHCHECK_URL
+          script: |
+            set -eu
+
+            # 生产配置必须存在（避免空配置误部署）
+            if [ ! -f "${DEPLOY_PATH}/config.yaml" ]; then
+              echo "missing config: ${DEPLOY_PATH}/config.yaml"
+              exit 1
+            fi
+
+            cd "${DEPLOY_PATH}"
+
+            # 首次部署：没有 .env 才用模板初始化（已有 .env 不覆盖，保留敏感变量）
+            if [ ! -f .env ]; then
+              cp .env.example .env
+            fi
+
+            # 更新/写入 IMAGE_TAG（只改这一行，做到可追溯部署）
+            if grep -q '^IMAGE_TAG=' .env; then
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
+            else
+              echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
+            fi
+
+            # 拉取并更新服务
+            docker compose pull crawler_center
+            docker compose up -d crawler_center
+
+            # 健康检查失败则打印容器日志并让 workflow 失败
+            if ! curl -fsS "${HEALTHCHECK_URL}" >/dev/null; then
+              docker compose logs --tail=200 crawler_center || true
+              exit 1
+            fi

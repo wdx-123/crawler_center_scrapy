@@ -8,12 +8,13 @@ from scrapy.utils.reactor import install_reactor  # 安装 Twisted reactor（Scr
 
 # 尝试把 Scrapy/Twisted 的事件循环切到 asyncio 上
 # 这样你就能在 async def 里用 await 来等待 Scrapy 运行完成
+_REACTOR_INSTALL_ERROR: Exception | None = None
 try:
     install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
-except Exception:
-    # reactor 只能安装一次；如果已经安装过，再装会报错
-    # 所以这里直接忽略异常，避免程序启动失败
-    pass
+except Exception as exc:
+    # uvicorn 可能在已启动的 ProactorEventLoop 中 import 应用，导致安装 AsyncioSelectorReactor 失败。
+    # 这里记录原始异常，在 run() 时返回明确指引，避免只看到模糊的 deferred_to_future 报错。
+    _REACTOR_INSTALL_ERROR = exc
 
 from scrapy import Spider, signals  # Spider：爬虫基类；signals：Scrapy 信号（事件）系统
 from scrapy.crawler import CrawlerRunner  # CrawlerRunner：在代码中启动/管理爬虫（不自动退出进程）
@@ -25,6 +26,25 @@ from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutErro
 from crawler_center.crawler.middlewares import set_proxy_service  # 设置代理服务（给中间件用）
 from crawler_center.crawler.settings import build_scrapy_settings  # 构建 Scrapy settings 配置
 from crawler_center.services.proxy_service import ProxyService  # 代理服务类
+
+# is_asyncio_selector_reactor 和 _build_reactor_hint_message 这两个函数
+# 是为了检查当前的 Twisted reactor 是否是 AsyncioSelectorReactor，
+def _is_asyncio_selector_reactor() -> bool:
+    return reactor.__class__.__name__ == "AsyncioSelectorReactor"
+
+
+def _build_reactor_hint_message() -> str:
+    current_reactor = reactor.__class__.__name__
+    install_error = (
+        f"; install_error={type(_REACTOR_INSTALL_ERROR).__name__}: {_REACTOR_INSTALL_ERROR}"
+        if _REACTOR_INSTALL_ERROR
+        else ""
+    )
+    return (
+        "scrapy runner requires AsyncioSelectorReactor, "
+        f"current_reactor={current_reactor}{install_error}. "
+        "On Windows, start with: .\\.venv\\Scripts\\python.exe -m crawler_center.api.run"
+    )
 
 
 class ScrapyRunnerService:
@@ -72,6 +92,9 @@ class ScrapyRunnerService:
         run_timeout_sec: Optional[int] = None,  # 可选：本次运行的超时时间
         **spider_kwargs: Any,  # 传给 spider 的参数，比如 start_urls、keyword 等
     ) -> List[Dict[str, Any]]:
+        if not _is_asyncio_selector_reactor():
+            raise CrawlerExecutionError(_build_reactor_hint_message())
+
         # CrawlerRunner 依赖已运行的 reactor；若未启动会出现请求悬挂直至超时。
         if not reactor.running:
             reactor.startRunning(installSignalHandlers=False)

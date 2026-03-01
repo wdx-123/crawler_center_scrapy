@@ -23,6 +23,8 @@ class LanqiaoService:
         items = await self._runner.run(
             LanqiaoSolveStatsSpider,
             base_url=self._settings.lanqiao_base_url,
+            login_url=self._settings.lanqiao_login_url,
+            user_url=self._settings.lanqiao_user_url,
             phone=phone,
             password=password,
             sync_num=sync_num,

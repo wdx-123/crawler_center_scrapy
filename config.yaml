@@ -21,4 +21,4 @@ api:
   version: "2.0.0"
 
 internal:
-  token: ""
+  token: "dev-secret-token-test"

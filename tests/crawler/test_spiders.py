@@ -30,6 +30,8 @@ def test_leetcode_graphql_request_builder_exists_and_works() -> None:
 def test_lanqiao_requests_carry_target_site_meta() -> None:
     spider = LanqiaoSolveStatsSpider(
         base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
         phone="13800000000",
         password="pwd",
         sync_num=0,
@@ -62,6 +64,8 @@ def test_lanqiao_requests_carry_target_site_meta() -> None:
 def test_lanqiao_login_json_error_reports_item_error() -> None:
     spider = LanqiaoSolveStatsSpider(
         base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
         phone="13800000000",
         password="pwd",
         sync_num=0,
@@ -82,6 +86,8 @@ def test_lanqiao_login_json_error_reports_item_error() -> None:
 def test_lanqiao_sync_num_limit_stops_pagination() -> None:
     spider = LanqiaoSolveStatsSpider(
         base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
         phone="13800000000",
         password="pwd",
         sync_num=2,

@@ -6,7 +6,7 @@ import pytest
 import scrapy
 from twisted.internet.defer import Deferred
 
-from crawler_center.core.errors import CrawlerTimeoutError
+from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutError
 from crawler_center.crawler.runner import ScrapyRunnerService
 from crawler_center.services.proxy_service import ProxyService
 from tests.conftest import build_test_settings
@@ -94,3 +94,22 @@ async def test_runner_rebinds_reactor_loop(tmp_path):
 
     assert items == [{"title": "ok"}]
     assert reactor._asyncioEventloop is asyncio.get_running_loop()  # type: ignore[attr-defined]
+
+# 下面这个测试是为了验证当 reactor 不是 AsyncioSelectorReactor 时，
+# runner 能否抛出带有明确提示信息的异常，指导用户去调整 Windows 开发环境的 asyncio policy 设置。
+@pytest.mark.asyncio
+async def test_runner_reactor_mismatch_has_actionable_message(monkeypatch):
+    settings = build_test_settings()
+    proxy_service = ProxyService(probe_urls=settings.probe_urls, user_agent=settings.default_user_agent)
+
+    ScrapyRunnerService.reset_instance_for_tests()
+    runner = ScrapyRunnerService.get_instance(app_settings=settings, proxy_service=proxy_service)
+
+    monkeypatch.setattr("crawler_center.crawler.runner._is_asyncio_selector_reactor", lambda: False)
+
+    with pytest.raises(CrawlerExecutionError) as exc:
+        await runner.run(DummySpider, run_timeout_sec=0.01)
+
+    message = str(exc.value)
+    assert "AsyncioSelectorReactor" in message
+    assert "crawler_center.api.run" in message

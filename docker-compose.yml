@@ -1,17 +1,14 @@
 services:
   crawler_center:
-    # 请将 <YOUR_GITHUB_USERNAME> 替换为您的 GitHub 用户名
-    # 示例: ghcr.io/zhangsan/crawler_center:0.1
-    image: ghcr.io/wdx-123/crawler_center:0.1
+    image: ghcr.io/wdx-123/crawler_center_scrapy:${IMAGE_TAG:-latest}
+    pull_policy: always
     container_name: crawler_center
-    restart: always
+    restart: unless-stopped
     ports:
-      # 宿主机端口:容器端口
-      - "8001:8001"
+      - "8000:8000"
     volumes:
-      # 挂载配置文件，方便在服务器直接修改配置
-      # 格式：宿主机路径:容器内路径
-      - ./config.yaml:/app/config.yaml
+      - ${CONFIG_PATH:-/opt/crawler_center_scrapy/config.yaml}:/app/config.yaml:ro
     environment:
-      # 显式设置时区为上海
-      - TZ=Asia/Shanghai
+      TZ: ${TZ:-Asia/Shanghai}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}

@@ -48,6 +48,8 @@ crawler_center_scrapy/
 │  ├─ crawler/              # Scrapy runner、spider、parser、中间件
 │  └─ services/             # 业务服务层（leetcode/luogu/lanqiao/proxy）
 ├─ tests/                   # API / Service / Parser / Runner 测试
+├─ .env.example             # 服务器部署环境变量模板
+├─ .github/workflows/       # 镜像自动发布工作流
 ├─ config.yaml              # 默认配置文件
 ├─ requirements.txt
 ├─ Dockerfile
@@ -76,6 +78,12 @@ pip install -r requirements.txt
 
 ```bash
 uvicorn crawler_center.api.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+Windows 建议使用（避免 ProactorEventLoop 与 Twisted reactor 不兼容）：
+
+```bash
+.venv\Scripts\python.exe -m crawler_center.api.run
 ```
 
 启动后可访问：
@@ -308,24 +316,131 @@ pytest -q
 ### 本地构建并运行
 
 ```bash
-docker build -t crawler_center:local .
-docker run --rm -p 8001:8001 -v $(pwd)/config.yaml:/app/config.yaml crawler_center:local
+docker build -t ghcr.io/wdx-123/crawler_center_scrapy:local .
+docker run --rm -p 8001:8001 -v $(pwd)/config.yaml:/app/config.yaml:ro ghcr.io/wdx-123/crawler_center_scrapy:local
 ```
 
 Windows PowerShell 可用：
 
 ```powershell
-docker run --rm -p 8001:8001 -v ${PWD}\config.yaml:/app/config.yaml crawler_center:local
+docker run --rm -p 8001:8001 -v ${PWD}\config.yaml:/app/config.yaml:ro ghcr.io/wdx-123/crawler_center_scrapy:local
 ```
 
-### 使用 `docker-compose.yml`
+本地 smoke test：
+
+```bash
+curl http://127.0.0.1:8001/v2/healthz
+```
+
+### 发布到 GHCR（自动）
+
+本仓库使用 GitHub Actions 工作流 `.github/workflows/cd.yml` 自动发布镜像：
+
+- 触发：`push` 到 `main` 或手动 `workflow_dispatch`
+- 平台：`linux/amd64` + `linux/arm64`
+- 镜像：`ghcr.io/wdx-123/crawler_center_scrapy`
+- 标签：`v0.0.<run_number>`、`sha-<short_sha>`、`latest`
+
+当前策略为公开包，服务器拉取时无需 `docker login ghcr.io`。
+
+触发命令（示例）：
+
+```bash
+git push origin main
+```
+
+发布完成后，可在 GHCR 页面查看新镜像标签。
+
+### 服务器部署（docker compose）
+
+1) 在服务器准备目录（示例）：
+
+```bash
+mkdir -p /opt/crawler_center_scrapy
+cd /opt/crawler_center_scrapy
+```
+
+2) 准备配置文件 `/opt/crawler_center_scrapy/config.yaml`。  
+3) 复制本仓库的 `docker-compose.yml` 和 `.env.example`，并创建 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+`.env` 关键项示例：
+
+```env
+IMAGE_TAG=latest
+CONFIG_PATH=/opt/crawler_center_scrapy/config.yaml
+TZ=Asia/Shanghai
+LOG_LEVEL=INFO
+INTERNAL_TOKEN=replace-with-your-token
+```
+
+说明：自动部署时会把 `IMAGE_TAG` 更新为当前发布的 `sha-<short_sha>`。
+
+4) 拉取并启动：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+5) 验证：
+
+```bash
+curl http://127.0.0.1:8001/v2/healthz
+docker compose logs --tail=100
+```
+
+### GitHub 仓库配置（必须）
+
+1) `Settings -> Actions -> General`
+
+- Workflow permissions 需要允许 `Read and write permissions`（用于推送 GHCR 包）。
+
+2) `Settings -> Secrets and variables -> Actions`
+
+- 必填 Secrets：
+  - `DEPLOY_HOST`
+  - `DEPLOY_USER`
+  - `DEPLOY_SSH_KEY`
+  - `DEPLOY_HOST_FINGERPRINT`
+- 可选 Variables（有默认值）：
+  - `DEPLOY_PORT`（默认 `22`）
+  - `DEPLOY_PATH`（默认 `/opt/crawler_center_scrapy`）
+  - `HEALTHCHECK_URL`（默认 `http://127.0.0.1:8001/v2/healthz`）
+
+3) `Settings -> Branches -> Branch protection rules (main)`
+
+- 开启 `Require a pull request before merging`
+- 开启 `Require status checks to pass before merging`
+- 勾选状态检查 `CI - Test / tests`
+
+### 自动部署行为
+
+- `cd.yml` 在镜像推送后会自动部署到 prod：
+  - 上传 `docker-compose.yml` 与 `.env.example`
+  - 校验 `config.yaml` 存在
+  - 自动把 `.env` 的 `IMAGE_TAG` 更新为本次 `sha-<short_sha>`
+  - 执行 `docker compose pull && docker compose up -d`
+  - 健康检查失败会输出 `docker compose logs --tail=200` 并让流程失败
+
+### 回滚
+
+当新版本异常时，修改 `.env` 里的 `IMAGE_TAG` 为历史 `sha-xxxxxxx` 后重新启动：
 
 ```bash
 docker compose up -d
 ```
 
-> 当前 `docker-compose.yml` 默认镜像为 `ghcr.io/wdx-123/crawler_center:0.1`。  
-> 发布你自己的版本时，请替换为你的镜像地址与标签。
+### 多架构镜像检查
+
+```bash
+docker buildx imagetools inspect ghcr.io/wdx-123/crawler_center_scrapy:latest
+```
+
+输出中应包含 `linux/amd64` 和 `linux/arm64`。
 
 ## 已知限制
 

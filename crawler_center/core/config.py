@@ -48,6 +48,8 @@ class AppSettings:
     leetcode_base_url: str
     luogu_base_url: str
     lanqiao_base_url: str
+    lanqiao_login_url: str
+    lanqiao_user_url: str
     default_timeout_sec: int
     default_sleep_sec: float
     default_user_agent: str
@@ -112,6 +114,13 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
     leetcode_base_url = os.getenv("LEETCODE_BASE_URL", leetcode_conf.get("base_url", "https://leetcode.cn"))
     luogu_base_url = os.getenv("LUOGU_BASE_URL", luogu_conf.get("base_url", "https://www.luogu.com.cn"))
     lanqiao_base_url = os.getenv("LANQIAO_BASE_URL", lanqiao_conf.get("base_url", "https://www.lanqiao.cn"))
+    lanqiao_login_url = os.getenv(
+        "LANQIAO_LOGIN_URL",
+        lanqiao_conf.get("login_url", "https://passport.lanqiao.cn/api/v1/login/?auth_type=login"),
+    )
+    lanqiao_user_url = os.getenv(
+        "LANQIAO_USER_URL", lanqiao_conf.get("user_url", "https://passport.lanqiao.cn/api/v1/user/")
+    )
 
     default_timeout_sec = _as_int(os.getenv("DEFAULT_TIMEOUT_SEC", crawler_conf.get("default_timeout", 15)), 15)
     default_sleep_sec = _as_float(os.getenv("DEFAULT_SLEEP_SEC", crawler_conf.get("default_sleep_sec", 0.8)), 0.8)
@@ -147,6 +156,10 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
     )
 
     token_from_env = os.getenv("INTERNAL_TOKEN")
+    # Treat empty string as not set to avoid overriding config with empty value
+    if token_from_env == "":
+        token_from_env = None
+
     token_from_yaml = internal_conf.get("token")
     internal_token = token_from_env if token_from_env is not None else token_from_yaml
 
@@ -156,6 +169,8 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
         leetcode_base_url=str(leetcode_base_url),
         luogu_base_url=str(luogu_base_url),
         lanqiao_base_url=str(lanqiao_base_url),
+        lanqiao_login_url=str(lanqiao_login_url),
+        lanqiao_user_url=str(lanqiao_user_url),
         default_timeout_sec=default_timeout_sec,
         default_sleep_sec=default_sleep_sec,
         default_user_agent=str(default_user_agent),

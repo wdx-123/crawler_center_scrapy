@@ -15,12 +15,21 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
 
     name = "lanqiao_solve_stats"
     target_site = TargetSite.LANQIAO.value
-    login_url = "https://passport.lanqiao.cn/api/v1/login/?auth_type=login"
-    user_url = "https://passport.lanqiao.cn/api/v1/user/"
 
-    def __init__(self, base_url: str, phone: str, password: str, sync_num: int, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        login_url: str,
+        user_url: str,
+        phone: str,
+        password: str,
+        sync_num: int,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.base_url = base_url.rstrip("/")
+        self.login_url = login_url
+        self.user_url = user_url
         self.phone = phone
         self.password = password
         self.sync_num = int(sync_num)
