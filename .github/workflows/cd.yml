@@ -177,6 +177,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ env.DEPLOY_PORT }}
           # fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          command_timeout: 30m
+          timeout: 5m
           envs: DEPLOY_PATH,IMAGE_TAG,HEALTHCHECK_URL,GHCR_USERNAME,GHCR_TOKEN
           script: |
             set -eu
