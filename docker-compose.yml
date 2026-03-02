@@ -2,7 +2,7 @@ services:
   crawler_center:
     image: ghcr.io/wdx-123/crawler_center_scrapy:${IMAGE_TAG:-latest}
     pull_policy: always
-    container_name: crawler_center
+    container_name: crawler_center_scrapy
     restart: unless-stopped
     ports:
       - "8000:8000"

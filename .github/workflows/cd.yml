@@ -210,6 +210,9 @@ jobs:
             docker compose pull crawler_center
             docker compose up -d crawler_center
 
+            # 等待服务启动
+            sleep 15
+
             # 健康检查失败则打印容器日志并让 workflow 失败
             if ! curl -fsS "${HEALTHCHECK_URL}" >/dev/null; then
               docker compose logs --tail=200 crawler_center || true
