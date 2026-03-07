@@ -27,6 +27,17 @@ def build_test_settings(internal_token: Optional[str] = None) -> AppSettings:
         internal_token=internal_token,
         log_level="INFO",
         config_path=Path("config.yaml"),
+        redis_address="",
+        redis_password="",
+        redis_db=0,
+        obs_enabled=True,
+        obs_service_name="crawler_center_test",
+        obs_stream_key="traces:stream",
+        obs_stream_maxlen=1000,
+        obs_queue_size=128,
+        obs_flush_interval_ms=100,
+        obs_flush_batch_size=10,
+        obs_max_payload_bytes=2048,
     )
 
 

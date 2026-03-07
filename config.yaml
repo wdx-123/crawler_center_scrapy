@@ -22,3 +22,21 @@ api:
 
 internal:
   token: "dev-secret-token-test"
+
+# Redis 共享配置（个人助手）
+redis:
+  address: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+# Observability 全链路追踪
+observability:
+  enabled: true
+  service_name: "crawler_center"
+  traces:
+    stream_key: "traces:stream"
+    stream_maxlen: 10000
+    queue_size: 2048
+    flush_interval_ms: 500
+    flush_batch_size: 50
+    max_payload_bytes: 4096

@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from dotenv import load_dotenv
+
+# 尽早加载 .env 文件，使其注入环境变量，覆盖 config.yaml 但优先级低于真实环境变量
+load_dotenv()
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -62,6 +66,21 @@ class AppSettings:
     internal_token: Optional[str]
     log_level: str
     config_path: Path
+
+    # Redis
+    redis_address: str
+    redis_password: str
+    redis_db: int
+
+    # Observability
+    obs_enabled: bool
+    obs_service_name: str
+    obs_stream_key: str
+    obs_stream_maxlen: int
+    obs_queue_size: int
+    obs_flush_interval_ms: int
+    obs_flush_batch_size: int
+    obs_max_payload_bytes: int
 
     @property
     def probe_urls(self) -> Dict[str, str]:
@@ -110,6 +129,9 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
     crawler_conf = data.get("crawler", {})
     api_conf = data.get("api", {})
     internal_conf = data.get("internal", {})
+    redis_conf = data.get("redis", {})
+    obs_conf = data.get("observability", {})
+    obs_traces_conf = obs_conf.get("traces", {})
 
     leetcode_base_url = os.getenv("LEETCODE_BASE_URL", leetcode_conf.get("base_url", "https://leetcode.cn"))
     luogu_base_url = os.getenv("LUOGU_BASE_URL", luogu_conf.get("base_url", "https://www.luogu.com.cn"))
@@ -165,6 +187,20 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
 
     log_level = os.getenv("LOG_LEVEL", data.get("logging", {}).get("level", "INFO"))
 
+    redis_address = os.getenv("REDIS_ADDRESS", redis_conf.get("address", ""))
+    redis_password = os.getenv("REDIS_PASSWORD", redis_conf.get("password", ""))
+    redis_db = _as_int(os.getenv("REDIS_DB", redis_conf.get("db", 0)), 0)
+
+    obs_enabled_raw = os.getenv("OBS_ENABLED", str(obs_conf.get("enabled", False)))
+    obs_enabled = obs_enabled_raw.lower() in ("true", "1", "yes")
+    obs_service_name = os.getenv("OBS_SERVICE_NAME", obs_conf.get("service_name", "crawler_center"))
+    obs_stream_key = obs_traces_conf.get("stream_key", "traces:stream")
+    obs_stream_maxlen = _as_int(obs_traces_conf.get("stream_maxlen", 10000), 10000)
+    obs_queue_size = _as_int(obs_traces_conf.get("queue_size", 2048), 2048)
+    obs_flush_interval_ms = _as_int(obs_traces_conf.get("flush_interval_ms", 500), 500)
+    obs_flush_batch_size = _as_int(obs_traces_conf.get("flush_batch_size", 50), 50)
+    obs_max_payload_bytes = _as_int(obs_traces_conf.get("max_payload_bytes", 4096), 4096)
+
     return AppSettings(
         leetcode_base_url=str(leetcode_base_url),
         luogu_base_url=str(luogu_base_url),
@@ -183,4 +219,15 @@ def load_settings(path: str = "config.yaml") -> AppSettings:
         internal_token=internal_token,
         log_level=str(log_level).upper(),
         config_path=yaml_path,
+        redis_address=str(redis_address),
+        redis_password=str(redis_password),
+        redis_db=redis_db,
+        obs_enabled=obs_enabled,
+        obs_service_name=str(obs_service_name),
+        obs_stream_key=str(obs_stream_key),
+        obs_stream_maxlen=obs_stream_maxlen,
+        obs_queue_size=obs_queue_size,
+        obs_flush_interval_ms=obs_flush_interval_ms,
+        obs_flush_batch_size=obs_flush_batch_size,
+        obs_max_payload_bytes=obs_max_payload_bytes,
     )

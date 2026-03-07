@@ -25,7 +25,8 @@ def main() -> None:
     _configure_windows_asyncio_policy()
     from crawler_center.api.main import app
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    loop_mode = "none" if sys.platform == "win32" else "auto"
+    uvicorn.run(app, host="127.0.0.1", port=8000, loop=loop_mode)
 
 
 if __name__ == "__main__":

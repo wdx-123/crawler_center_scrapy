@@ -64,9 +64,70 @@ from crawler_center.services.leetcode_service import LeetCodeService
 from crawler_center.services.luogu_service import LuoguService
 # 代理池服务：代理维护、健康状态更新、主动探测
 from crawler_center.services.proxy_service import ProxyService
+from crawler_center.observability.backend import (
+    NoopTraceBackend,
+    RedisTraceBackend,
+    TraceBackend,
+)
+from crawler_center.observability.middleware import TraceMiddleware
 
-# 当前模块日志器（logger name = crawler_center.api.main）
 logger = logging.getLogger(__name__)
+
+
+class _DeferredBackend:
+    """延迟代理：middleware 注册时 backend 尚未初始化，通过 app.state 延迟获取。"""
+
+    def __init__(self, app: FastAPI) -> None:
+        self._app = app
+
+    async def record_span(self, span) -> None:
+        backend = getattr(self._app.state, "trace_backend", None)
+        if backend is not None:
+            await backend.record_span(span)
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+
+async def _init_trace_backend(settings: AppSettings) -> TraceBackend:
+    """根据配置初始化 TraceBackend，失败时降级为 Noop。"""
+    if not settings.obs_enabled:
+        return NoopTraceBackend()
+
+    if not settings.redis_address:
+        logger.warning("observability enabled but redis_address is empty, falling back to noop")
+        return NoopTraceBackend()
+
+    try:
+        from redis.asyncio import Redis
+
+        redis_client = Redis(
+            host=settings.redis_address.rsplit(":", 1)[0],
+            port=int(settings.redis_address.rsplit(":", 1)[1]) if ":" in settings.redis_address else 6379,
+            password=settings.redis_password or None,
+            db=settings.redis_db,
+            decode_responses=True,
+        )
+        await redis_client.ping()
+
+        backend = RedisTraceBackend(
+            redis_client,
+            stream_key=settings.obs_stream_key,
+            stream_maxlen=settings.obs_stream_maxlen,
+            queue_size=settings.obs_queue_size,
+            flush_interval_sec=settings.obs_flush_interval_ms / 1000.0,
+            flush_batch_size=settings.obs_flush_batch_size,
+            max_payload_bytes=settings.obs_max_payload_bytes,
+        )
+        await backend.start()
+        logger.info("trace backend started (redis=%s, stream=%s)", settings.redis_address, settings.obs_stream_key)
+        return backend
+    except Exception:
+        logger.warning("failed to init redis trace backend, falling back to noop", exc_info=True)
+        return NoopTraceBackend()
 
 
 @asynccontextmanager
@@ -103,6 +164,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 启动代理池主动健康探测循环；异常不会中断服务启动。
     await proxy_service.start_probe_loop(interval_sec=settings.proxy_active_probe_interval_sec)
 
+    trace_backend = await _init_trace_backend(settings)
+    app.state.trace_backend = trace_backend
+    runner.set_trace_backend(trace_backend)
+
     log_event(
         logger,
         logging.INFO,
@@ -112,12 +177,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         status_code=200,
         version=settings.api_version,
         config_path=str(settings.config_path),
+        obs_enabled=settings.obs_enabled,
     )
 
     try:
         yield
     finally:
-        # 退出时显式停止后台任务，避免进程退出前残留异步任务。
+        runner.set_trace_backend(NoopTraceBackend())
+        await trace_backend.stop()
         await proxy_service.stop_probe_loop()
         log_event(
             logger,
@@ -154,7 +221,15 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     app = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=_lifespan)
     app.state.settings = settings
 
-    # 路由注册顺序不影响匹配结果，但按业务域分组便于维护。
+    if settings.obs_enabled:
+        # TraceMiddleware 在 lifespan 之前注册；实际 backend 由 lifespan 注入到 app.state，
+        # middleware 通过 _DeferredBackend 延迟获取，保证 lifespan 初始化顺序安全。
+        app.add_middleware(
+            TraceMiddleware,
+            backend=_DeferredBackend(app),
+            service_name=settings.obs_service_name,
+        )
+
     app.include_router(healthz_router)
     app.include_router(leetcode_router)
     app.include_router(luogu_router)

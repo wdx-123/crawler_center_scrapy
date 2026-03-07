@@ -56,14 +56,21 @@ def build_scrapy_settings(app_settings: AppSettings) -> Settings:
     # -------------------------
     # Downloader Middleware：请求发出前、响应返回后都会经过的钩子机制
     # 常用于：代理设置/UA 轮换/失败重试增强/请求签名/反爬处理等
-    settings.set(
-        "DOWNLOADER_MIDDLEWARES",
-        {
-            # 代理健康中间件（示例用途：为请求注入代理、统计失败率、熔断不可用代理等）
-            # 数值为优先级（越小越先执行）；543 表示该中间件的执行顺序在 Scrapy 中间件链中的位置
-            "crawler_center.crawler.middlewares.ProxyHealthMiddleware": 543,
-        },
-    )
+    downloader_middlewares = {
+        # 代理健康中间件（示例用途：为请求注入代理、统计失败率、熔断不可用代理等）
+        # 数值为优先级（越小越先执行）；543 表示该中间件的执行顺序在 Scrapy 中间件链中的位置
+        "crawler_center.crawler.middlewares.ProxyHealthMiddleware": 543,
+    }
+    if app_settings.obs_enabled:
+        downloader_middlewares["crawler_center.crawler.scrapy_trace.ScrapyTraceDownloaderMiddleware"] = 530
+        settings.set(
+            "SPIDER_MIDDLEWARES",
+            {
+                "crawler_center.crawler.scrapy_trace.ScrapyTraceSpiderMiddleware": 543,
+            },
+        )
+
+    settings.set("DOWNLOADER_MIDDLEWARES", downloader_middlewares)
 
     # -------------------------
     # 管道（Item Pipelines）

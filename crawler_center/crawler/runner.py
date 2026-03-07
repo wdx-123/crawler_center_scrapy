@@ -25,12 +25,25 @@ from crawler_center.core.config import AppSettings  # 你们项目的配置类
 from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutError  # 自定义异常：执行失败/超时
 from crawler_center.crawler.middlewares import set_proxy_service  # 设置代理服务（给中间件用）
 from crawler_center.crawler.settings import build_scrapy_settings  # 构建 Scrapy settings 配置
+from crawler_center.crawler.scrapy_trace import (
+    ScrapyTraceSession,
+    build_item_error_message,
+    set_trace_session,
+)
+from crawler_center.observability.backend import NoopTraceBackend, TraceBackend
+from crawler_center.observability.models import STATUS_ERROR, STATUS_OK
+from crawler_center.observability.tracer import format_exception_stack
 from crawler_center.services.proxy_service import ProxyService  # 代理服务类
 
 # is_asyncio_selector_reactor 和 _build_reactor_hint_message 这两个函数
 # 是为了检查当前的 Twisted reactor 是否是 AsyncioSelectorReactor，
 def _is_asyncio_selector_reactor() -> bool:
     return reactor.__class__.__name__ == "AsyncioSelectorReactor"
+
+
+def _loop_supports_add_reader(loop: asyncio.AbstractEventLoop) -> bool:
+    loop_add_reader = getattr(type(loop), "add_reader", None)
+    return callable(loop_add_reader) and loop_add_reader is not asyncio.AbstractEventLoop.add_reader
 
 
 def _build_reactor_hint_message() -> str:
@@ -82,9 +95,14 @@ class ScrapyRunnerService:
 
         # 创建 CrawlerRunner：负责在当前进程中启动/运行爬虫
         self._runner = CrawlerRunner(settings=scrapy_settings)
+        self._trace_backend: TraceBackend = NoopTraceBackend()
+        self._service_name = app_settings.obs_service_name
 
         # 设置代理服务：一般是让 downloader middleware 能拿到 proxy_service
         set_proxy_service(proxy_service)
+
+    def set_trace_backend(self, backend: TraceBackend | None) -> None:
+        self._trace_backend = backend or NoopTraceBackend()
 
     async def run(
         self,
@@ -95,56 +113,105 @@ class ScrapyRunnerService:
         if not _is_asyncio_selector_reactor():
             raise CrawlerExecutionError(_build_reactor_hint_message())
 
+        running_loop: asyncio.AbstractEventLoop | None = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if running_loop is not None and not _loop_supports_add_reader(running_loop):
+            raise CrawlerExecutionError(
+                f"{_build_reactor_hint_message()} current_event_loop={type(running_loop).__name__}"
+            )
+
         # CrawlerRunner 依赖已运行的 reactor；若未启动会出现请求悬挂直至超时。
         if not reactor.running:
             reactor.startRunning(installSignalHandlers=False)
 
-        try:
-            running_loop = asyncio.get_running_loop()
-            reactor_loop = getattr(reactor, "_asyncioEventloop", None)
-            # Uvicorn/TestClient 会创建新的 asyncio loop，导致 reactor 绑定旧 loop 而请求悬挂。
-            # 这里在运行前把 reactor 绑定到当前 loop。
-            if reactor_loop is not None and reactor_loop is not running_loop:
-                reactor._asyncioEventloop = running_loop  # type: ignore[attr-defined]
-        except RuntimeError:
-            pass
+        reactor_loop = getattr(reactor, "_asyncioEventloop", None)
+        # Uvicorn/TestClient 会创建新的 asyncio loop，导致 reactor 绑定旧 loop 而请求悬挂。
+        # 这里在运行前把 reactor 绑定到当前 loop。
+        if running_loop is not None and reactor_loop is not None and reactor_loop is not running_loop:
+            reactor._asyncioEventloop = running_loop  # type: ignore[attr-defined]
+
+        session: ScrapyTraceSession | None = None
+        if self._app_settings.obs_enabled:
+            session = ScrapyTraceSession.from_current_context(
+                backend=self._trace_backend,
+                service_name=self._service_name,
+                spider_name=getattr(spider_cls, "name", spider_cls.__name__),
+                target_site=str(getattr(spider_cls, "target_site", "") or ""),
+            )
+            session.start_run_span()
 
         # 用来收集爬虫产出的 items（最终返回这个 list）
         collected_items: List[Dict[str, Any]] = []
 
-        # 由 runner 创建 crawler（相当于 spider 的“运行实例/容器”）
-        crawler = self._runner.create_crawler(spider_cls)
-
-        # Scrapy 每产出一个 item，会触发 signals.item_scraped 信号
-        # 我们定义一个回调函数来接住 item，并塞进 collected_items
-        def _on_item_scraped(item: Any, response: Any, spider: Spider) -> None:
-            # item 可能是 dict，也可能是 Item（类似 dict 的对象）
-            if isinstance(item, dict):
-                collected_items.append(item)  # 如果本身就是 dict，直接放进去
-            else:
-                collected_items.append(dict(item))  # 如果是 Item，转成 dict 再放进去
-
-        # 把回调函数绑定到 crawler 的 item_scraped 信号上
-        crawler.signals.connect(_on_item_scraped, signal=signals.item_scraped)
-
-        # 开始运行爬虫；返回 Twisted 的 Deferred（不是 asyncio Future）
-        deferred = self._runner.crawl(crawler, **spider_kwargs)
-
         # 本次运行的超时：优先用参数 run_timeout_sec，否则用默认配置
         timeout = run_timeout_sec if run_timeout_sec is not None else self._run_timeout
-
         try:
+            # 由 runner 创建 crawler（相当于 spider 的“运行实例/容器”）
+            crawler = self._runner.create_crawler(spider_cls)
+            if session is not None:
+                set_trace_session(crawler, session)
+
+            # Scrapy 每产出一个 item，会触发 signals.item_scraped 信号
+            # 我们定义一个回调函数来接住 item，并塞进 collected_items
+            def _on_item_scraped(item: Any, response: Any, spider: Spider) -> None:
+                # item 可能是 dict，也可能是 Item（类似 dict 的对象）
+                if isinstance(item, dict):
+                    collected_items.append(item)  # 如果本身就是 dict，直接放进去
+                else:
+                    collected_items.append(dict(item))  # 如果是 Item，转成 dict 再放进去
+
+            # 把回调函数绑定到 crawler 的 item_scraped 信号上
+            crawler.signals.connect(_on_item_scraped, signal=signals.item_scraped)
+
+            # 开始运行爬虫；返回 Twisted 的 Deferred（不是 asyncio Future）
+            deferred = self._runner.crawl(crawler, **spider_kwargs)
+
             # deferred_to_future：把 Twisted Deferred 转成 asyncio Future
             # asyncio.wait_for：加超时控制，如果超时会抛 asyncio.TimeoutError
             await asyncio.wait_for(deferred_to_future(deferred), timeout=timeout)
 
         except asyncio.TimeoutError as exc:
+            if session is not None:
+                await session.finish_run_span(
+                    status=STATUS_ERROR,
+                    error_code="crawler_timeout",
+                    message=f"crawler run timed out after {timeout}s",
+                )
             # 超时：抛你们项目自定义的超时异常
             raise CrawlerTimeoutError(f"crawler run timed out after {timeout}s") from exc
 
         except Exception as exc:
+            if session is not None:
+                await session.finish_run_span(
+                    status=STATUS_ERROR,
+                    error_code="crawler_execution_error",
+                    message=str(exc),
+                    error_stack=format_exception_stack(exc),
+                )
             # 其他任何异常：统一包装成执行异常
             raise CrawlerExecutionError(str(exc)) from exc
+
+        if session is not None:
+            run_status = STATUS_OK
+            run_error_code = ""
+            run_message = ""
+            for item in collected_items:
+                item_error_message = build_item_error_message(item)
+                if item_error_message:
+                    run_status = STATUS_ERROR
+                    run_error_code = "upstream_request_error"
+                    run_message = item_error_message
+                    break
+            await session.finish_run_span(
+                status=run_status,
+                error_code=run_error_code,
+                message=run_message,
+                extra_tags={"item_count": len(collected_items)},
+            )
 
         # 爬虫跑完：返回收集到的 items
         return collected_items

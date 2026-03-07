@@ -12,3 +12,8 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
+      REDIS_ADDRESS: ${REDIS_ADDRESS:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      OBS_ENABLED: ${OBS_ENABLED:-true}
+      OBS_SERVICE_NAME: ${OBS_SERVICE_NAME:-crawler_center}

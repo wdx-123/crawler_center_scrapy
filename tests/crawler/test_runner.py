@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 
 import pytest
 import scrapy
@@ -8,6 +9,7 @@ from twisted.internet.defer import Deferred
 
 from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutError
 from crawler_center.crawler.runner import ScrapyRunnerService
+from crawler_center.observability.context import reset_trace_context, set_trace_context
 from crawler_center.services.proxy_service import ProxyService
 from tests.conftest import build_test_settings
 
@@ -36,6 +38,29 @@ class DummySpider(scrapy.Spider):
     name = "dummy_spider"
 
 
+class StubTraceBackend:
+    def __init__(self) -> None:
+        self.spans = []
+
+    async def record_span(self, span) -> None:
+        self.spans.append(copy.deepcopy(span))
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+
+def set_parent_trace():
+    return set_trace_context(
+        trace_id="0123456789abcdef0123456789abcdef",
+        span_id="1111111111111111",
+        parent_span_id="",
+        request_id="req-test-runner",
+    )
+
+
 @pytest.mark.asyncio
 async def test_runner_collects_items(tmp_path):
     html_file = tmp_path / "sample.html"
@@ -56,17 +81,29 @@ async def test_runner_collects_items(tmp_path):
 async def test_runner_timeout(monkeypatch):
     settings = build_test_settings()
     proxy_service = ProxyService(probe_urls=settings.probe_urls, user_agent=settings.default_user_agent)
+    backend = StubTraceBackend()
 
     ScrapyRunnerService.reset_instance_for_tests()
     runner = ScrapyRunnerService.get_instance(app_settings=settings, proxy_service=proxy_service)
+    runner.set_trace_backend(backend)
 
     def never_finishes(*args, **kwargs):
         return Deferred()
 
     monkeypatch.setattr(runner._runner, "crawl", never_finishes)
 
-    with pytest.raises(CrawlerTimeoutError):
-        await runner.run(DummySpider, run_timeout_sec=0.01)
+    tokens = set_parent_trace()
+    try:
+        with pytest.raises(CrawlerTimeoutError):
+            await runner.run(DummySpider, run_timeout_sec=0.01)
+    finally:
+        reset_trace_context(tokens)
+
+    assert len(backend.spans) == 1
+    span = backend.spans[0]
+    assert span.stage == "crawler.run"
+    assert span.status == "error"
+    assert span.error_code == "crawler_timeout"
 
 
 @pytest.mark.asyncio
@@ -113,3 +150,52 @@ async def test_runner_reactor_mismatch_has_actionable_message(monkeypatch):
     message = str(exc.value)
     assert "AsyncioSelectorReactor" in message
     assert "crawler_center.api.run" in message
+
+
+@pytest.mark.asyncio
+async def test_runner_loop_without_add_reader_has_actionable_message(monkeypatch):
+    settings = build_test_settings()
+    proxy_service = ProxyService(probe_urls=settings.probe_urls, user_agent=settings.default_user_agent)
+
+    ScrapyRunnerService.reset_instance_for_tests()
+    runner = ScrapyRunnerService.get_instance(app_settings=settings, proxy_service=proxy_service)
+
+    monkeypatch.setattr("crawler_center.crawler.runner._is_asyncio_selector_reactor", lambda: True)
+    monkeypatch.setattr("crawler_center.crawler.runner._loop_supports_add_reader", lambda _loop: False)
+
+    with pytest.raises(CrawlerExecutionError) as exc:
+        await runner.run(DummySpider, run_timeout_sec=0.01)
+
+    message = str(exc.value)
+    assert "crawler_center.api.run" in message
+    assert "current_event_loop" in message
+
+
+@pytest.mark.asyncio
+async def test_runner_execution_error_records_run_span(monkeypatch):
+    settings = build_test_settings()
+    proxy_service = ProxyService(probe_urls=settings.probe_urls, user_agent=settings.default_user_agent)
+    backend = StubTraceBackend()
+
+    ScrapyRunnerService.reset_instance_for_tests()
+    runner = ScrapyRunnerService.get_instance(app_settings=settings, proxy_service=proxy_service)
+    runner.set_trace_backend(backend)
+
+    def raise_execution_error(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner._runner, "crawl", raise_execution_error)
+
+    tokens = set_parent_trace()
+    try:
+        with pytest.raises(CrawlerExecutionError) as exc:
+            await runner.run(DummySpider, run_timeout_sec=0.01)
+    finally:
+        reset_trace_context(tokens)
+
+    assert "boom" in str(exc.value)
+    assert len(backend.spans) == 1
+    span = backend.spans[0]
+    assert span.stage == "crawler.run"
+    assert span.status == "error"
+    assert span.error_code == "crawler_execution_error"
