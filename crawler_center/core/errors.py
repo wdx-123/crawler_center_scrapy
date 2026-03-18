@@ -40,6 +40,13 @@ class UpstreamRequestError(CrawlerCenterError):
         super().__init__(message=message, code="upstream_request_error")
 
 
+class UpstreamAuthenticationError(CrawlerCenterError):
+    """上游站点认证失败，例如账号或密码无效。"""
+
+    def __init__(self, message: str = "upstream authentication failed") -> None:
+        super().__init__(message=message, code="upstream_auth_failed")
+
+
 class ProxyUnavailableError(CrawlerCenterError):
     """代理池中没有可用代理。"""
 

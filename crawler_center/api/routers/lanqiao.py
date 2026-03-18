@@ -15,7 +15,13 @@ router = APIRouter(prefix="/v2/lanqiao", tags=["lanqiao"])
 @router.post(
     "/solve_stats",
     response_model=OkResponse,
-    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={
+        401: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
 )
 async def solve_stats(
     payload: LanqiaoSolveStatsRequest,

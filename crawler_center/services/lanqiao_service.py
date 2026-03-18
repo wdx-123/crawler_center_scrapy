@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from crawler_center.core.config import AppSettings
-from crawler_center.core.errors import UpstreamRequestError
+from crawler_center.core.errors import UpstreamAuthenticationError, UpstreamRequestError
 from crawler_center.crawler.parsers.lanqiao_parser import build_solve_stats_payload
 from crawler_center.crawler.runner import ScrapyRunnerService
 from crawler_center.crawler.spiders.lanqiao_solve_stats import LanqiaoSolveStatsSpider
@@ -36,6 +36,8 @@ class LanqiaoService:
         for row in items:
             error = row.get("_error")
             if error:
+                if row.get("_error_code") == "upstream_auth_failed":
+                    raise UpstreamAuthenticationError(str(error))
                 stage = row.get("_stage")
                 if stage:
                     raise UpstreamRequestError(f"{context}: [{stage}] {error}")

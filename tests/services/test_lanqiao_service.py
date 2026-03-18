@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from crawler_center.core.errors import UpstreamRequestError
+from crawler_center.core.errors import UpstreamAuthenticationError, UpstreamRequestError
 from crawler_center.services.lanqiao_service import LanqiaoService
 from tests.conftest import build_test_settings
 
@@ -13,6 +13,25 @@ class _DummyRunner:
 
     async def run(self, spider_cls, **kwargs):  # noqa: ANN001
         return list(self._items)
+
+
+@pytest.mark.asyncio
+async def test_lanqiao_service_raises_auth_error_from_item() -> None:
+    runner = _DummyRunner(
+        items=[
+            {
+                "_error": "Lanqiao credentials invalid",
+                "_stage": "login",
+                "_error_code": "upstream_auth_failed",
+            }
+        ]
+    )
+    service = LanqiaoService(runner=runner, settings=build_test_settings())  # type: ignore[arg-type]
+
+    with pytest.raises(UpstreamAuthenticationError) as exc_info:
+        await service.solve_stats(phone="13800000000", password="pwd", sync_num=0)
+
+    assert str(exc_info.value) == "Lanqiao credentials invalid"
 
 
 @pytest.mark.asyncio

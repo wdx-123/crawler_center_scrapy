@@ -207,6 +207,16 @@ curl -X POST http://127.0.0.1:8000/v2/lanqiao/solve_stats \
 - `0`：返回 `stats + problems`
 - `>0`：仅在前 N 条原始提交范围内筛选去重后返回 `problems`
 
+若蓝桥账号或密码无效，会返回统一错误而不是空 `problems`：
+
+```json
+{
+  "ok": false,
+  "error": "Lanqiao credentials invalid",
+  "code": "upstream_auth_failed"
+}
+```
+
 ### 5) 代理池同步（内部接口）
 
 ```bash
@@ -403,6 +413,7 @@ http.request -> crawler.run -> outbound.http -> crawler.callback
 | HTTP 状态 | `code` | 场景 |
 | --- | --- | --- |
 | 401 | `http_error` | 内部 token 错误 |
+| 401 | `upstream_auth_failed` | 蓝桥账号或密码无效 |
 | 422 | `validation_error` | 请求参数不合法 |
 | 502 | `upstream_request_error` / `crawler_execution_error` | 上游请求或爬虫执行失败 |
 | 503 | `proxy_unavailable` / `http_error` | 无可用代理或内部 token 未配置 |

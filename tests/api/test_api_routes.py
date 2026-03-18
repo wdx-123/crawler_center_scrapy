@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 
+from crawler_center.core.errors import UpstreamAuthenticationError
 from tests.conftest import create_test_app
 
 
@@ -129,6 +130,29 @@ def test_lanqiao_solve_stats_validation() -> None:
     payload = response.json()
     assert payload["ok"] is False
     assert payload["code"] == "validation_error"
+
+
+def test_lanqiao_solve_stats_auth_failure_returns_401() -> None:
+    app = create_test_app()
+    with TestClient(app) as client:
+        async def fake_solve_stats(phone: str, password: str, sync_num: int):
+            assert phone == "13800000000"
+            assert password == "pwd"
+            assert sync_num == 0
+            raise UpstreamAuthenticationError("Lanqiao credentials invalid")
+
+        client.app.state.lanqiao_service.solve_stats = fake_solve_stats
+        response = client.post(
+            "/v2/lanqiao/solve_stats",
+            json={"phone": "13800000000", "password": "pwd", "sync_num": 0},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "ok": False,
+        "error": "Lanqiao credentials invalid",
+        "code": "upstream_auth_failed",
+    }
 
 
 def test_lanqiao_login_route_removed_returns_404_with_unified_error() -> None:

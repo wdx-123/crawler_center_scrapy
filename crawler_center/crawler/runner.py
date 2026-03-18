@@ -26,6 +26,7 @@ from crawler_center.core.errors import CrawlerExecutionError, CrawlerTimeoutErro
 from crawler_center.crawler.middlewares import set_proxy_service  # 设置代理服务（给中间件用）
 from crawler_center.crawler.settings import build_scrapy_settings  # 构建 Scrapy settings 配置
 from crawler_center.crawler.scrapy_trace import (
+    build_item_error_code,
     ScrapyTraceSession,
     build_item_error_message,
     set_trace_session,
@@ -203,7 +204,7 @@ class ScrapyRunnerService:
                 item_error_message = build_item_error_message(item)
                 if item_error_message:
                     run_status = STATUS_ERROR
-                    run_error_code = "upstream_request_error"
+                    run_error_code = build_item_error_code(item)
                     run_message = item_error_message
                     break
             await session.finish_run_span(

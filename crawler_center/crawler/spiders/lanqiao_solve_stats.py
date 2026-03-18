@@ -15,6 +15,21 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
 
     name = "lanqiao_solve_stats"
     target_site = TargetSite.LANQIAO.value
+    auth_failed_error = "Lanqiao credentials invalid"
+    auth_failed_error_code = "upstream_auth_failed"
+    auth_failed_codes = {"20000", "30000"}
+    auth_failed_message_hints = (
+        "未注册",
+        "密码错误",
+        "登录失败",
+        "账号或密码",
+        "账户或密码",
+        "用户不存在",
+        "invalid credentials",
+        "login failed",
+        "unauthorized",
+        "forbidden",
+    )
 
     def __init__(
         self,
@@ -46,7 +61,7 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
             url=f"{self.base_url}/",
             callback=self.parse_warmup,
             dont_filter=True,
-            meta={"target_site": self.target_site},
+            meta=self._request_meta(allow_http_errors=True),
         )
 
     def parse_warmup(self, response: scrapy.http.Response):
@@ -64,19 +79,26 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
             },
             callback=self.parse_login,
             dont_filter=True,
-            meta={"target_site": self.target_site},
+            meta=self._request_meta(allow_http_errors=True),
         )
 
     def parse_login(self, response: scrapy.http.Response):
         """校验登录接口返回并继续验证登录态。"""
-        if response.status >= 400:
-            yield {"_error": f"Lanqiao login HTTP {response.status}", "_stage": "login", "_status": response.status}
+        try:
+            data = response.json()
+        except Exception:
+            if response.status >= 400:
+                yield {"_error": f"Lanqiao login HTTP {response.status}", "_stage": "login", "_status": response.status}
+                return
+            yield {"_error": "Lanqiao login response is not valid JSON", "_stage": "login_json"}
             return
 
-        try:
-            response.json()
-        except Exception:
-            yield {"_error": "Lanqiao login response is not valid JSON", "_stage": "login_json"}
+        if self._is_auth_failure_payload(data):
+            yield self._auth_failure_item(stage="login")
+            return
+
+        if response.status >= 400:
+            yield {"_error": f"Lanqiao login HTTP {response.status}", "_stage": "login", "_status": response.status}
             return
 
         yield scrapy.Request(
@@ -84,11 +106,15 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
             headers={"Referer": "https://passport.lanqiao.cn/login/"},
             callback=self.parse_user,
             dont_filter=True,
-            meta={"target_site": self.target_site},
+            meta=self._request_meta(allow_http_errors=True),
         )
 
     def parse_user(self, response: scrapy.http.Response):
         """验证登录态有效后开始拉取提交分页。"""
+        if response.status in {401, 403}:
+            yield self._auth_failure_item(stage="user_check")
+            return
+
         if response.status != 200:
             yield {"_error": f"Lanqiao user check HTTP {response.status}", "_stage": "user_check", "_status": response.status}
             return
@@ -103,8 +129,8 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
             yield {"_error": "Lanqiao user check payload is not object", "_stage": "user_check_payload"}
             return
 
-        if not (data.get("id") or data.get("phone")):
-            yield {"_error": "Lanqiao login not effective", "_stage": "user_check_login"}
+        if not data.get("id"):
+            yield self._auth_failure_item(stage="user_check_login")
             return
 
         yield scrapy.Request(
@@ -112,7 +138,7 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
             headers={"Referer": f"{self.base_url}/"},
             callback=self.parse_submissions,
             dont_filter=True,
-            meta={"target_site": self.target_site},
+            meta=self._request_meta(allow_http_errors=True),
         )
 
     def parse_submissions(self, response: scrapy.http.Response):
@@ -155,8 +181,37 @@ class LanqiaoSolveStatsSpider(scrapy.Spider):
                 headers={"Referer": f"{self.base_url}/"},
                 callback=self.parse_submissions,
                 dont_filter=True,
-                meta={"target_site": self.target_site},
+                meta=self._request_meta(allow_http_errors=True),
             )
+
+    def _request_meta(self, *, allow_http_errors: bool = False) -> Dict[str, Any]:
+        meta: Dict[str, Any] = {"target_site": self.target_site}
+        if allow_http_errors:
+            meta["handle_httpstatus_all"] = True
+        return meta
+
+    def _auth_failure_item(self, stage: str) -> Dict[str, Any]:
+        return {
+            "_error": self.auth_failed_error,
+            "_stage": stage,
+            "_error_code": self.auth_failed_error_code,
+        }
+
+    def _is_auth_failure_payload(self, payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        code = payload.get("code")
+        if code is not None and str(code) in self.auth_failed_codes:
+            return True
+        for field in ("message", "msg", "detail", "error"):
+            value = payload.get(field)
+            if isinstance(value, str) and self._contains_auth_failure_message(value):
+                return True
+        return False
+
+    def _contains_auth_failure_message(self, message: str) -> bool:
+        normalized = message.strip().lower()
+        return any(hint in normalized for hint in self.auth_failed_message_hints)
 
     def _trim_rows(self, rows: Iterable[Dict[str, Any]]) -> list[Dict[str, Any]]:
         if self.sync_num <= 0:

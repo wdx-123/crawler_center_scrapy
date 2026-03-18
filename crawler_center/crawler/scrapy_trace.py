@@ -180,24 +180,33 @@ def target_site_from_request(request: Request, spider: object) -> str:
     return str(spider_target or "")
 
 
-def extract_item_error(item: Any) -> tuple[str, str]:
+def extract_item_error(item: Any) -> tuple[str, str, str]:
     """从 item 中提取业务错误信息；仅支持 dict-like 对象。"""
     getter = getattr(item, "get", None)
     if not callable(getter):
-        return "", ""
+        return "", "", ""
     error = getter("_error")
     stage = getter("_stage")
-    return str(error or ""), str(stage or "")
+    error_code = getter("_error_code")
+    return str(error or ""), str(stage or ""), str(error_code or "")
 
 
 def build_item_error_message(item: Any) -> str:
     """将 item 中的错误字段格式化为可读消息。"""
-    error, stage = extract_item_error(item)
+    error, stage, _ = extract_item_error(item)
     if not error:
         return ""
     if stage:
         return f"[{stage}] {error}"
     return error
+
+
+def build_item_error_code(item: Any, fallback: str = "upstream_request_error") -> str:
+    """从 item 中提取错误码；未显式提供时使用通用上游错误码。"""
+    error, _, error_code = extract_item_error(item)
+    if not error:
+        return ""
+    return error_code or fallback
 
 
 def request_tags(request: Request, spider: object, callback_name: str) -> dict[str, object]:
@@ -422,7 +431,7 @@ class ScrapyTraceSpiderMiddleware:
                     if item_error_message and status != STATUS_ERROR:
                         # item 带业务错误时，将当前 callback 标记为失败
                         status = STATUS_ERROR
-                        error_code = "upstream_request_error"
+                        error_code = build_item_error_code(value)
                         message = item_error_message
                 yield value
         except Exception as exc:
@@ -473,7 +482,7 @@ class ScrapyTraceSpiderMiddleware:
                     if item_error_message and status != STATUS_ERROR:
                         # item 带业务错误时，将当前 callback 标记为失败
                         status = STATUS_ERROR
-                        error_code = "upstream_request_error"
+                        error_code = build_item_error_code(value)
                         message = item_error_message
                 yield value
         except Exception as exc:

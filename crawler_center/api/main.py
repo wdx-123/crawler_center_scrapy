@@ -51,6 +51,7 @@ from crawler_center.core.errors import (
     CrawlerExecutionError,  # 爬虫执行失败
     CrawlerTimeoutError,  # 爬虫超时
     ProxyUnavailableError,  # 无可用代理
+    UpstreamAuthenticationError,  # 上游认证失败
     UpstreamRequestError,  # 上游站点请求失败
     pick_error_code,  # 异常对象 -> 机器可读错误码
 )
@@ -267,6 +268,11 @@ def create_app(app_settings: Optional[AppSettings] = None) -> FastAPI:
     async def proxy_unavailable_handler(_: Request, exc: ProxyUnavailableError) -> JSONResponse:
         """代理不可用，映射为 503。"""
         return _error_response(status_code=503, error=str(exc), code=exc.code)
+
+    @app.exception_handler(UpstreamAuthenticationError)
+    async def upstream_auth_error_handler(_: Request, exc: UpstreamAuthenticationError) -> JSONResponse:
+        """上游认证失败，映射为 401。"""
+        return _error_response(status_code=401, error=str(exc), code=exc.code)
 
     @app.exception_handler(UpstreamRequestError)
     async def upstream_error_handler(_: Request, exc: UpstreamRequestError) -> JSONResponse:

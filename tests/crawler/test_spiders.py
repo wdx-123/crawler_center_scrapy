@@ -39,6 +39,7 @@ def test_lanqiao_requests_carry_target_site_meta() -> None:
 
     warmup_request = next(spider.start_requests())
     assert warmup_request.meta.get("target_site") == spider.target_site
+    assert warmup_request.meta.get("handle_httpstatus_all") is True
 
     warmup_response = HtmlResponse(
         url="https://www.lanqiao.cn/",
@@ -48,6 +49,7 @@ def test_lanqiao_requests_carry_target_site_meta() -> None:
     )
     login_request = next(spider.parse_warmup(warmup_response))
     assert login_request.meta.get("target_site") == spider.target_site
+    assert login_request.meta.get("handle_httpstatus_all") is True
     assert login_request.method == "POST"
 
     login_ok_response = TextResponse(
@@ -59,6 +61,18 @@ def test_lanqiao_requests_carry_target_site_meta() -> None:
     )
     user_request = next(spider.parse_login(login_ok_response))
     assert user_request.meta.get("target_site") == spider.target_site
+    assert user_request.meta.get("handle_httpstatus_all") is True
+
+    user_ok_response = TextResponse(
+        url=spider.user_url,
+        body=b'{"id": 1}',
+        status=200,
+        encoding="utf-8",
+        request=Request(url=spider.user_url),
+    )
+    submissions_request = next(spider.parse_user(user_ok_response))
+    assert submissions_request.meta.get("target_site") == spider.target_site
+    assert submissions_request.meta.get("handle_httpstatus_all") is True
 
 
 def test_lanqiao_login_json_error_reports_item_error() -> None:
@@ -81,6 +95,82 @@ def test_lanqiao_login_json_error_reports_item_error() -> None:
     rows = list(spider.parse_login(bad_login_response))
 
     assert rows == [{"_error": "Lanqiao login response is not valid JSON", "_stage": "login_json"}]
+
+
+def test_lanqiao_login_business_error_reports_auth_failure() -> None:
+    spider = LanqiaoSolveStatsSpider(
+        base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
+        phone="13800000000",
+        password="pwd",
+        sync_num=0,
+    )
+
+    bad_login_response = TextResponse(
+        url=spider.login_url,
+        body=b'{"code":20000,"message":"\xe6\x9c\xaa\xe6\xb3\xa8\xe5\x86\x8c\xe7\x94\xa8\xe6\x88\xb7"}',
+        status=404,
+        encoding="utf-8",
+        request=Request(url=spider.login_url),
+    )
+    rows = list(spider.parse_login(bad_login_response))
+
+    assert rows == [
+        {"_error": "Lanqiao credentials invalid", "_stage": "login", "_error_code": "upstream_auth_failed"}
+    ]
+
+
+def test_lanqiao_user_check_403_reports_auth_failure() -> None:
+    spider = LanqiaoSolveStatsSpider(
+        base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
+        phone="13800000000",
+        password="pwd",
+        sync_num=0,
+    )
+
+    user_response = TextResponse(
+        url=spider.user_url,
+        body=b'{"code":30000}',
+        status=403,
+        encoding="utf-8",
+        request=Request(url=spider.user_url),
+    )
+    rows = list(spider.parse_user(user_response))
+
+    assert rows == [
+        {"_error": "Lanqiao credentials invalid", "_stage": "user_check", "_error_code": "upstream_auth_failed"}
+    ]
+
+
+def test_lanqiao_user_check_without_id_reports_auth_failure() -> None:
+    spider = LanqiaoSolveStatsSpider(
+        base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
+        phone="13800000000",
+        password="pwd",
+        sync_num=0,
+    )
+
+    user_response = TextResponse(
+        url=spider.user_url,
+        body=b'{"phone":"13800000000"}',
+        status=200,
+        encoding="utf-8",
+        request=Request(url=spider.user_url),
+    )
+    rows = list(spider.parse_user(user_response))
+
+    assert rows == [
+        {
+            "_error": "Lanqiao credentials invalid",
+            "_stage": "user_check_login",
+            "_error_code": "upstream_auth_failed",
+        }
+    ]
 
 
 def test_lanqiao_sync_num_limit_stops_pagination() -> None:
@@ -115,3 +205,24 @@ def test_lanqiao_sync_num_limit_stops_pagination() -> None:
 
     assert len(rows) == 2
     assert next_requests == []
+
+
+def test_lanqiao_empty_submissions_are_stable() -> None:
+    spider = LanqiaoSolveStatsSpider(
+        base_url="https://www.lanqiao.cn",
+        login_url="https://passport.lanqiao.cn/api/v1/login/?auth_type=login",
+        user_url="https://passport.lanqiao.cn/api/v1/user/",
+        phone="13800000000",
+        password="pwd",
+        sync_num=0,
+    )
+
+    response = TextResponse(
+        url="https://www.lanqiao.cn/api/v2/problems/submissions/?page_size=100",
+        body=b'{"results":[],"next":null}',
+        status=200,
+        encoding="utf-8",
+        request=Request(url="https://www.lanqiao.cn/api/v2/problems/submissions/?page_size=100"),
+    )
+
+    assert list(spider.parse_submissions(response)) == []

@@ -60,9 +60,10 @@ class ErrorItemSpider(scrapy.Spider):
     name = "error_item_spider"
     target_site = "local"
 
-    def __init__(self, file_url: str, **kwargs):
+    def __init__(self, file_url: str, error_code: str = "", **kwargs):
         super().__init__(**kwargs)
         self.file_url = file_url
+        self.error_code = error_code
 
     async def start(self):
         yield scrapy.Request(
@@ -73,7 +74,10 @@ class ErrorItemSpider(scrapy.Spider):
         )
 
     def parse_failure(self, response):
-        yield {"_error": "boom", "_stage": "parse_failure"}
+        item = {"_error": "boom", "_stage": "parse_failure"}
+        if self.error_code:
+            item["_error_code"] = self.error_code
+        yield item
 
 
 class AsyncOutputSpider(scrapy.Spider):
@@ -219,3 +223,32 @@ async def test_scrapy_trace_marks_error_items(tmp_path):
     assert run_span.status == "error"
     assert run_span.error_code == "upstream_request_error"
     assert "boom" in run_span.message
+
+
+@pytest.mark.asyncio
+async def test_scrapy_trace_uses_item_specific_error_code(tmp_path):
+    html_file = tmp_path / "error-auth.html"
+    html_file.write_text("<html><body>error</body></html>", encoding="utf-8")
+
+    runner, backend = build_runner_with_backend()
+    tokens = set_parent_trace()
+    try:
+        items = await runner.run(
+            ErrorItemSpider,
+            file_url=html_file.resolve().as_uri(),
+            error_code="upstream_auth_failed",
+            run_timeout_sec=3,
+        )
+    finally:
+        reset_trace_context(tokens)
+
+    await asyncio.sleep(0.05)
+
+    assert items == [{"_error": "boom", "_stage": "parse_failure", "_error_code": "upstream_auth_failed"}]
+    callback_span = next(span for span in backend.spans if span.stage == "crawler.callback")
+    run_span = next(span for span in backend.spans if span.stage == "crawler.run")
+
+    assert callback_span.status == "error"
+    assert callback_span.error_code == "upstream_auth_failed"
+    assert run_span.status == "error"
+    assert run_span.error_code == "upstream_auth_failed"
