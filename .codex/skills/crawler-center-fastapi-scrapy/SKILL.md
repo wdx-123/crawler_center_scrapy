@@ -10,18 +10,20 @@
 - 调整错误模型、日志、配置、安全策略（`crawler_center/core/*`）
 
 ## Core workflow (in order)
-1. 明确改动边界  
+1. 先落待审计划  
+   执行型任务先按项目根目录 `plan/README.md` 生成 `plan/<module>/pending-<task>.md`，待用户明确确认后再进入实现流程。  
+2. 明确改动边界  
    先定位是「协议层」「编排层」「抓取层」「解析层」中的哪几层需要修改。
-2. 先定契约再改实现  
+3. 先定契约再改实现  
    明确请求模型、响应字段、错误码与 HTTP 状态映射，再改代码。
-3. 分层落地改动  
+4. 分层落地改动  
    - `schema`：请求/响应模型  
    - `router`：入参校验与调用 service  
    - `service`：编排流程、异常提升  
    - `spider/parser`：抓取与解析逻辑  
-4. 补齐测试  
+5. 补齐测试  
    至少覆盖：成功路径 + 参数错误或上游错误路径。
-5. 回归验证  
+6. 回归验证  
    跑相关测试并确认 README/API 文档是否需要同步。
 
 ## Mandatory project constraints

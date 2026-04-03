@@ -9,6 +9,8 @@
 - 做版本发布前验收
 - 改动涉及 API 契约、解析逻辑、代理逻辑、配置项
 
+若当前任务会继续落代码或改规则，先按项目根目录 `plan/README.md` 生成 `plan/<module>/pending-<task>.md`，待用户明确确认后再执行。
+
 ## Release validation workflow
 1. 变更分类  
    将改动归类为：API / Parser / Spider / Proxy / Config / Docs。
